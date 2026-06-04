@@ -23,7 +23,7 @@ UPDATE_STAMP="$(dirname "$INSTALL_DIR")/.synup_hook_last_update"
 UPDATE_INTERVAL="${SYNUP_HOOK_UPDATE_INTERVAL:-86400}"   # seconds between update checks; 0 disables
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; RST='\033[0m'
+RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; BLD='\033[1m'; RST='\033[0m'
 log() { printf "%b\n" "$*" >&2; }
 
 # ---------- throttled background self-update ----------
@@ -91,8 +91,10 @@ run_scan() {
 
   log ""
   log "${RED}[synup] ✗ COMMIT BLOCKED — malware/secret scan found high/critical issues in your staged changes.${RST}"
-  log "Review the findings above and fix them. If you are certain this is a false positive:"
-  log "    ${YEL}SYNUP_SKIP_MALWARE_SCAN=1 git commit ...${RST}   (and please report the false positive)"
+  log "Fix the findings above, then ${BLD}re-stage the file(s)${RST} before committing again — the scan"
+  log "checks ${BLD}staged${RST} content, so a fix you haven't \`git add\`ed yet won't clear the block:"
+  log "    ${YEL}git add <file>  &&  git commit ...${RST}     (or use ${YEL}git commit -a${RST}, which re-stages tracked files)"
+  log "False positive? Bypass with ${YEL}SYNUP_SKIP_MALWARE_SCAN=1 git commit ...${RST} and please report it."
   return 1
 }
 
