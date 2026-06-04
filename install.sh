@@ -117,49 +117,115 @@ fi
 if [ "$DO_SIGNING" = 1 ]; then
 step "3/4  Configuring SSH commit signing"
 # ------------------------------------------------------------------
-  if [ "$(git config --global commit.gpgsign 2>/dev/null)" = "true" ] \
-     && [ -n "$(git config --global user.signingkey 2>/dev/null)" ]; then
-    ok "commit signing already configured (key: $(git config --global user.signingkey))"
-  else
-    # Pick an existing SSH key or create a dedicated signing key.
-    KEY=""
-    for cand in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
-      [ -f "$cand.pub" ] && { KEY="$cand"; break; }
-    done
-    if [ -z "$KEY" ]; then
-      KEY="$HOME/.ssh/synup_signing_ed25519"
-      info "no SSH key found — generating $KEY"
-      ssh-keygen -t ed25519 -f "$KEY" -N "" -C "synup-signing-$(whoami)@$(hostname)" >/dev/null
-      ok "generated signing key"
-    else
-      info "reusing existing SSH key: $KEY.pub"
-    fi
-
+  # --- shared: trust the key locally + register it on GitHub as a SIGNING key ---
+  register_signing_pub() {
+    local pubfile="$1"
     git config --global gpg.format ssh
-    git config --global user.signingkey "$KEY.pub"
+    git config --global user.signingkey "$pubfile"
     git config --global commit.gpgsign true
     git config --global tag.gpgsign true
 
     # allowed_signers lets you locally `git log --show-signature` verify.
-    email="$(git config --global user.email 2>/dev/null || echo "$(whoami)@synup.com")"
+    local email; email="$(git config --global user.email 2>/dev/null || echo "$(whoami)@synup.com")"
     mkdir -p "$(dirname "$ALLOWED_SIGNERS")"
-    grep -qsF "$(cut -d' ' -f1-2 < "$KEY.pub")" "$ALLOWED_SIGNERS" 2>/dev/null || \
-      printf '%s namespaces="git" %s\n' "$email" "$(cat "$KEY.pub")" >> "$ALLOWED_SIGNERS"
+    grep -qsF "$(cut -d' ' -f1-2 < "$pubfile")" "$ALLOWED_SIGNERS" 2>/dev/null || \
+      printf '%s namespaces="git" %s\n' "$email" "$(cat "$pubfile")" >> "$ALLOWED_SIGNERS"
     git config --global gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS"
-    ok "signing enabled (gpg.format=ssh, commit.gpgsign=true)"
 
-    # Register the public key with GitHub as a *signing* key.
+    # Register on GitHub as a *signing* key (cannot be used to push).
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-      if gh ssh-key add "$KEY.pub" --type signing --title "synup-signing-$(hostname)" >/dev/null 2>&1; then
-        ok "uploaded signing key to GitHub"
+      if gh ssh-key add "$pubfile" --type signing --title "synup-signing-$(hostname)" >/dev/null 2>&1; then
+        ok "registered signing key on GitHub"
       else
-        warn "could not auto-upload to GitHub (key may already exist, or token lacks 'admin:ssh_signing_key')"
-        warn "  add it manually: https://github.com/settings/ssh/new  (Key type: Signing Key)"
+        warn "couldn't auto-upload to GitHub (key may already exist, or token lacks 'admin:ssh_signing_key')"
+        warn "  add it manually at https://github.com/settings/ssh/new  (Key type: Signing Key)"
       fi
     else
-      warn "gh CLI not authenticated — add the key as a Signing Key here:"
-      warn "  https://github.com/settings/ssh/new"
-      printf "%b\n" "    ${CYA}$(cat "$KEY.pub")${RST}"
+      warn "gh not authenticated — add this as a Signing Key at https://github.com/settings/ssh/new :"
+      printf "%b\n" "    ${CYA}$(cat "$pubfile")${RST}"
+    fi
+  }
+
+  if [ "$(git config --global commit.gpgsign 2>/dev/null)" = "true" ] \
+     && [ -n "$(git config --global user.signingkey 2>/dev/null)" ]; then
+    ok "commit signing already configured (key: $(git config --global user.signingkey))"
+  else
+    SE_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+    SE_PUB=""
+    if [ -S "$SE_SOCK" ]; then
+      SE_PUB="$(SSH_AUTH_SOCK="$SE_SOCK" ssh-add -L 2>/dev/null | grep -m1 '^ssh-' || true)"
+    fi
+
+    # ---------- Path A: Secure Enclave via Secretive (key never touches disk) ----------
+    if [ -n "$SE_PUB" ]; then
+      info "Secure Enclave key found (Secretive) — using it for signing (private key stays in the chip)"
+      SE_PUBFILE="${SYNUP_HOME:-$HOME/.synup}/secretive_signing.pub"
+      printf '%s\n' "$SE_PUB" > "$SE_PUBFILE"
+
+      # Point git's signer at Secretive's agent for SIGNING ONLY, so your normal
+      # SSH auth/push agent is left untouched.
+      WRAPPER="${SYNUP_HOME:-$HOME/.synup}/ssh-keygen-secretive"
+      cat > "$WRAPPER" <<EOF
+#!/bin/sh
+# Routes git's SSH signing through Secretive's Secure Enclave agent only.
+SSH_AUTH_SOCK="$SE_SOCK" exec "$(command -v ssh-keygen)" "\$@"
+EOF
+      chmod +x "$WRAPPER"
+      git config --global gpg.ssh.program "$WRAPPER"
+      register_signing_pub "$SE_PUBFILE"
+      ok "signing enabled via Secure Enclave (Secretive)"
+
+    # ---------- Path B: dedicated, passphrase-protected file key ----------
+    else
+      if [ -d "/Applications/Secretive.app" ]; then
+        warn "Secretive is installed but has no key yet — create one in the Secretive app for"
+        warn "  hardware-backed signing, then re-run. Falling back to a passphrased file key for now."
+      else
+        info "Secretive (Secure Enclave) not detected — using a dedicated passphrased file key"
+        info "  (strongest option is Secretive: https://github.com/maxgoedjen/secretive )"
+      fi
+
+      KEY="$HOME/.ssh/synup_signing_ed25519"
+      git config --global --unset gpg.ssh.program 2>/dev/null || true
+
+      # Can we actually open the controlling terminal to prompt? (-e /dev/tty
+      # isn't enough — the node exists even when it's not usable, e.g. in CI.)
+      HAVE_TTY=0
+      if ( exec 3<>/dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
+
+      if [ -f "$KEY.pub" ]; then
+        info "reusing existing dedicated signing key: $KEY.pub"
+      elif [ "$HAVE_TTY" = 1 ]; then
+        # Prompt for a passphrase on the controlling terminal (works under curl|bash).
+        PASS=""; PASS2="x"
+        while [ "$PASS" != "$PASS2" ]; do
+          printf "Enter a passphrase for your new signing key: " > /dev/tty
+          IFS= read -rs PASS < /dev/tty; printf "\n" > /dev/tty
+          printf "Confirm passphrase: " > /dev/tty
+          IFS= read -rs PASS2 < /dev/tty; printf "\n" > /dev/tty
+          [ "$PASS" != "$PASS2" ] && warn "passphrases didn't match — try again"
+        done
+        if [ -z "$PASS" ]; then
+          warn "empty passphrase — the key file will be usable by anyone who copies it!"
+        fi
+        ssh-keygen -t ed25519 -f "$KEY" -N "$PASS" -C "synup-signing-$(whoami)@$(hostname)" >/dev/null
+        unset PASS PASS2
+        ok "generated passphrased signing key"
+        # Cache the passphrase in the macOS Keychain so you aren't retyping it.
+        if [ "$(uname)" = "Darwin" ]; then
+          ssh-add --apple-use-keychain "$KEY" </dev/tty 2>/dev/null || true
+          SSHCFG="$HOME/.ssh/config"; touch "$SSHCFG"; chmod 600 "$SSHCFG"
+          if ! grep -qsF "synup signing keychain" "$SSHCFG"; then
+            { printf '\n# >>> synup signing keychain >>>\nHost *\n  AddKeysToAgent yes\n  UseKeychain yes\n# <<< synup signing keychain <<<\n'; } >> "$SSHCFG"
+          fi
+        fi
+      else
+        warn "no terminal available for a passphrase prompt — generating WITHOUT a passphrase."
+        warn "  add one afterwards with:  ssh-keygen -p -f $KEY"
+        ssh-keygen -t ed25519 -f "$KEY" -N "" -C "synup-signing-$(whoami)@$(hostname)" >/dev/null
+      fi
+      register_signing_pub "$KEY.pub"
+      ok "signing enabled via file key ($KEY.pub)"
     fi
   fi
 fi

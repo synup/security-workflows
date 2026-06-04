@@ -62,9 +62,18 @@ Re-run the installer any time to pull the latest scanner rules and hooks:
 2. Sets `git config --global core.hooksPath ~/.synup/security-workflows/hooks`
    — one global hook for all repos. The hook **chains** to any existing
    `.git/hooks/pre-commit` or `.husky/pre-commit`, so project hooks keep working.
-3. Configures SSH commit signing (`gpg.format=ssh`, `commit.gpgsign=true`) using your
-   existing `~/.ssh/id_ed25519` (or generates a dedicated signing key), and registers
-   it on GitHub as a **Signing Key** via the `gh` CLI.
+3. Configures SSH commit signing (`gpg.format=ssh`, `commit.gpgsign=true`) and
+   registers the key on GitHub as a **Signing Key** (signing-only — it can't be used
+   to push). It picks the most secure key available:
+   - **Secure Enclave (preferred):** if [Secretive](https://github.com/maxgoedjen/secretive)
+     is installed with a key, that key is used — the private key never leaves the
+     Apple chip and can't be copied off disk. Signing is routed through Secretive's
+     agent **only** (via `gpg.ssh.program`), so your normal SSH auth/push agent is
+     untouched.
+   - **Passphrased file key (fallback):** generates a *dedicated*
+     `~/.ssh/synup_signing_ed25519` and prompts you for a passphrase (so the key file
+     alone is useless if copied), and the macOS Keychain caches the passphrase so you
+     aren't retyping it.
 
 | Flag | Effect |
 |------|--------|
