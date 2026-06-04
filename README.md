@@ -85,6 +85,18 @@ SYNUP_SKIP_MALWARE_SCAN=1 git commit   # skip only the malware scan
 SYNUP_HOOK_STRICT=1                     # block even on scanner infra errors (default: warn+allow)
 ```
 
+**Throttled auto-update.** The hook keeps its scanner rules fresh on its own: at most
+once every 24h it kicks off a **detached background `git pull`** of
+`~/.synup/security-workflows`. It never blocks or fails a commit — the current commit
+uses the cached scanner and the next commit picks up any update. (CI always fetches the
+latest scanner anyway, so the PR gate is never stale.)
+
+```bash
+SYNUP_HOOK_UPDATE_INTERVAL=3600 git commit   # check at most hourly instead of daily
+SYNUP_HOOK_UPDATE_INTERVAL=0    git commit   # disable auto-update for this commit
+SYNUP_HOOK_NO_UPDATE=1          git commit   # same: skip the update check
+```
+
 ### `scripts/scan_malware.py`
 Standalone scanner. Detects reverse shells, crypto miners, obfuscated payloads,
 web shells, hardcoded credentials (AWS/GitHub/Slack tokens, private keys), and

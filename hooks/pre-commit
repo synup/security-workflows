@@ -18,10 +18,39 @@ set -uo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCANNER="$HOOK_DIR/../scripts/scan_malware.py"
+INSTALL_DIR="$(cd "$HOOK_DIR/.." && pwd)"
+UPDATE_STAMP="$(dirname "$INSTALL_DIR")/.synup_hook_last_update"
+UPDATE_INTERVAL="${SYNUP_HOOK_UPDATE_INTERVAL:-86400}"   # seconds between update checks; 0 disables
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; RST='\033[0m'
 log() { printf "%b\n" "$*" >&2; }
+
+# ---------- throttled background self-update ----------
+# At most once per UPDATE_INTERVAL, kick off a non-blocking `git pull` of the
+# scanner repo so local rules stay fresh. It never blocks or fails the commit:
+# the pull runs detached in the background, so THIS commit uses the current
+# (cached) scanner and the NEXT commit picks up any update. CI always fetches
+# the latest scanner regardless, so the PR gate is never stale.
+maybe_update() {
+  [ "${SYNUP_HOOK_NO_UPDATE:-}" = "1" ] && return 0
+  [ "$UPDATE_INTERVAL" = "0" ] && return 0
+  command -v git >/dev/null 2>&1 || return 0
+  [ -d "$INSTALL_DIR/.git" ] || return 0
+
+  local now last
+  now="$(date +%s 2>/dev/null || echo 0)"
+  [ "$now" = "0" ] && return 0
+  last="$(cat "$UPDATE_STAMP" 2>/dev/null || echo 0)"
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  [ $((now - last)) -lt "$UPDATE_INTERVAL" ] && return 0
+
+  # Stamp now (before pulling) so concurrent/next commits don't also trigger.
+  printf '%s\n' "$now" > "$UPDATE_STAMP" 2>/dev/null || true
+
+  # Detached + fully silent → cannot block or break the commit.
+  ( git -C "$INSTALL_DIR" pull --ff-only --quiet ) >/dev/null 2>&1 </dev/null &
+}
 
 # ---------- infra failure handling ----------
 # Default: warn-and-allow so a missing dependency never bricks everyone's
@@ -79,6 +108,7 @@ run_repo_hook() {
   "$h"
 }
 
+maybe_update
 run_scan || exit 1
 run_repo_hook "$REPO_ROOT/.git/hooks/pre-commit" || exit $?
 run_repo_hook "$REPO_ROOT/.husky/pre-commit"     || exit $?

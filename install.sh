@@ -62,6 +62,8 @@ else
   git clone --quiet "$REPO_URL" "$INSTALL_DIR" && ok "cloned"
 fi
 chmod +x "$HOOKS_DIR"/* 2>/dev/null || true
+# Seed the hook's update timestamp so the next commit doesn't immediately re-pull.
+printf '%s\n' "$(date +%s)" > "${SYNUP_HOME:-$HOME/.synup}/.synup_hook_last_update" 2>/dev/null || true
 
 # ------------------------------------------------------------------
 if [ "$DO_HOOKS" = 1 ]; then
