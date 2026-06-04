@@ -22,7 +22,11 @@
 # ------------------------------------------------------------------
 set -euo pipefail
 
-REPO_URL="https://github.com/synup/security-workflows.git"
+# Override REPO_URL/REPO_REF (and SYNUP_HOME) to test a fork/branch before merge, e.g.:
+#   SYNUP_HOME=/tmp/synup-test SYNUP_REPO_URL=https://github.com/<you>/security-workflows.git \
+#   SYNUP_REPO_REF=add-precommit-hooks-and-signing ./install.sh
+REPO_URL="${SYNUP_REPO_URL:-https://github.com/synup/security-workflows.git}"
+REPO_REF="${SYNUP_REPO_REF:-}"
 INSTALL_DIR="${SYNUP_HOME:-$HOME/.synup}/security-workflows"
 HOOKS_DIR="$INSTALL_DIR/hooks"
 ALLOWED_SIGNERS="${SYNUP_HOME:-$HOME/.synup}/allowed_signers"
@@ -57,9 +61,17 @@ step "1/4  Fetching security-workflows → $INSTALL_DIR"
 # ------------------------------------------------------------------
 mkdir -p "$(dirname "$INSTALL_DIR")"
 if [ -d "$INSTALL_DIR/.git" ]; then
-  git -C "$INSTALL_DIR" pull --ff-only --quiet && ok "updated existing checkout"
+  git -C "$INSTALL_DIR" remote set-url origin "$REPO_URL" 2>/dev/null || true
+  git -C "$INSTALL_DIR" fetch --quiet origin
+  if [ -n "$REPO_REF" ]; then
+    git -C "$INSTALL_DIR" checkout --quiet "$REPO_REF"
+    git -C "$INSTALL_DIR" pull --ff-only --quiet origin "$REPO_REF" && ok "updated to $REPO_REF"
+  else
+    git -C "$INSTALL_DIR" pull --ff-only --quiet && ok "updated existing checkout"
+  fi
 else
   git clone --quiet "$REPO_URL" "$INSTALL_DIR" && ok "cloned"
+  [ -n "$REPO_REF" ] && { git -C "$INSTALL_DIR" checkout --quiet "$REPO_REF" && ok "checked out $REPO_REF"; }
 fi
 chmod +x "$HOOKS_DIR"/* 2>/dev/null || true
 # Seed the hook's update timestamp so the next commit doesn't immediately re-pull.
