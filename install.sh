@@ -20,6 +20,7 @@
 #   --inject-husky          Auto-add the scan to husky repos' .husky/pre-commit
 #   --reconfigure-signing   Re-run signing setup even if already configured
 #                           (e.g. to switch an existing key to Secretive)
+#   --signing-method M      secretive | passphrase  (skip the prompt; pick M)
 #   -h, --help              Show this help
 # ------------------------------------------------------------------
 set -euo pipefail
@@ -39,6 +40,7 @@ DO_SIGNING=1
 DO_HOOKS=1
 INJECT_HUSKY=0
 RECONFIGURE_SIGNING=0
+SIGNING_METHOD="${SYNUP_SIGNING_METHOD:-}"   # secretive | passphrase | "" (prompt/auto)
 
 RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYA='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 info()  { printf "%b\n" "${CYA}▸${RST} $*"; }
@@ -54,7 +56,8 @@ while [ $# -gt 0 ]; do
     --no-hooks)             DO_HOOKS=0; shift ;;
     --inject-husky)         INJECT_HUSKY=1; shift ;;
     --reconfigure-signing)  RECONFIGURE_SIGNING=1; shift ;;
-    -h|--help)              sed -n '2,32p' "$0"; exit 0 ;;
+    --signing-method)       SIGNING_METHOD="$2"; shift 2 ;;
+    -h|--help)              sed -n '2,34p' "$0"; exit 0 ;;
     *)               err "unknown option: $1"; exit 2 ;;
   esac
 done
@@ -186,9 +189,44 @@ step "3/4  Configuring SSH commit signing"
       SE_PUB="$(SSH_AUTH_SOCK="$SE_SOCK" ssh-add -L 2>/dev/null | grep -m1 -E '^(ssh-|ecdsa-|sk-)' || true)"
     fi
 
+    # Can we open the controlling terminal to prompt? (-e /dev/tty isn't enough —
+    # the node exists even when it's not usable, e.g. in CI.)
+    HAVE_TTY=0
+    if ( exec 3<>/dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
+
+    # ---- choose the signing method: --signing-method/env > prompt > auto ----
+    case "$SIGNING_METHOD" in
+      secretive|passphrase) METHOD="$SIGNING_METHOD" ;;
+      ""|auto)              METHOD="" ;;
+      *) warn "unknown --signing-method '$SIGNING_METHOD' — ignoring"; METHOD="" ;;
+    esac
+    if [ -z "$METHOD" ] && [ "$HAVE_TTY" = 1 ]; then
+      if [ -n "$SE_PUB" ]; then se_tag="detected ✓ — recommended"; def=1; else se_tag="not set up; needs Secretive app + a key"; def=2; fi
+      printf "\nChoose your commit-signing method:\n" > /dev/tty
+      printf "  1) Secure Enclave via Secretive  [%s]\n" "$se_tag" > /dev/tty
+      printf "  2) Passphrase-protected key file\n" > /dev/tty
+      printf "Enter choice [%s]: " "$def" > /dev/tty
+      IFS= read -r choice < /dev/tty; [ -z "$choice" ] && choice="$def"
+      case "$choice" in
+        1) METHOD=secretive ;;
+        2) METHOD=passphrase ;;
+        *) warn "invalid choice — using passphrase"; METHOD=passphrase ;;
+      esac
+    fi
+    [ -z "$METHOD" ] && { [ -n "$SE_PUB" ] && METHOD=secretive || METHOD=passphrase; }   # non-interactive auto
+    if [ "$METHOD" = secretive ] && [ -z "$SE_PUB" ]; then
+      if [ -d "/Applications/Secretive.app" ]; then
+        warn "Secretive is installed but has no key yet — create one in the app, then re-run with --reconfigure-signing."
+      else
+        warn "Secretive not detected (install it + create a key first: https://github.com/maxgoedjen/secretive )."
+      fi
+      warn "Using a passphrased file key for now."
+      METHOD=passphrase
+    fi
+
     # ---------- Path A: Secure Enclave via Secretive (key never touches disk) ----------
-    if [ -n "$SE_PUB" ]; then
-      info "Secure Enclave key found (Secretive) — using it for signing (private key stays in the chip)"
+    if [ "$METHOD" = secretive ]; then
+      info "Using Secure Enclave (Secretive) — private key stays in the chip, can't be copied off disk"
       SE_PUBFILE="${SYNUP_HOME:-$HOME/.synup}/secretive_signing.pub"
       printf '%s\n' "$SE_PUB" > "$SE_PUBFILE"
 
@@ -207,21 +245,10 @@ EOF
 
     # ---------- Path B: dedicated, passphrase-protected file key ----------
     else
-      if [ -d "/Applications/Secretive.app" ]; then
-        warn "Secretive is installed but has no key yet — create one in the Secretive app for"
-        warn "  hardware-backed signing, then re-run. Falling back to a passphrased file key for now."
-      else
-        info "Secretive (Secure Enclave) not detected — using a dedicated passphrased file key"
-        info "  (strongest option is Secretive: https://github.com/maxgoedjen/secretive )"
-      fi
+      info "Using a dedicated passphrase-protected key file"
 
       KEY="$HOME/.ssh/synup_signing_ed25519"
       git config --global --unset gpg.ssh.program 2>/dev/null || true
-
-      # Can we actually open the controlling terminal to prompt? (-e /dev/tty
-      # isn't enough — the node exists even when it's not usable, e.g. in CI.)
-      HAVE_TTY=0
-      if ( exec 3<>/dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
 
       if [ -f "$KEY.pub" ]; then
         info "reusing existing dedicated signing key: $KEY.pub"
