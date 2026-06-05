@@ -16,6 +16,12 @@
 # ------------------------------------------------------------------
 set -uo pipefail
 
+# Re-entry guard: when wired into a husky repo, husky's .husky/pre-commit calls
+# this hook. If anything calls back into us within the same commit, bail out
+# immediately so we can never loop or scan/run twice.
+[ -n "${SYNUP_PRECOMMIT_ACTIVE:-}" ] && exit 0
+export SYNUP_PRECOMMIT_ACTIVE=1
+
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCANNER="$HOOK_DIR/../scripts/scan_malware.py"
 INSTALL_DIR="$(cd "$HOOK_DIR/.." && pwd)"
@@ -112,6 +118,9 @@ run_repo_hook() {
 
 maybe_update
 run_scan || exit 1
+# Chain to a real repo-local .git/hooks/pre-commit (which git ignores under a
+# global core.hooksPath). We deliberately do NOT chain to .husky/pre-commit:
+# in husky repos we are invoked *from* .husky/pre-commit (via --inject-husky),
+# so chaining back would re-run the whole husky hook and loop.
 run_repo_hook "$REPO_ROOT/.git/hooks/pre-commit" || exit $?
-run_repo_hook "$REPO_ROOT/.husky/pre-commit"     || exit $?
 exit 0
