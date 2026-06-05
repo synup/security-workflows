@@ -14,11 +14,14 @@
 #   # or, from a clone:  ./install.sh [options]
 #
 # Options:
-#   --root DIR        Directory to scan for husky repos (default: $PWD)
-#   --no-signing      Skip SSH commit-signing setup
-#   --no-hooks        Skip git hook setup
-#   --inject-husky    Auto-add the scan to husky repos' .husky/pre-commit
-#   -h, --help        Show this help
+#   --root DIR              Directory to scan for husky repos (default: $PWD)
+#   --no-signing            Skip SSH commit-signing setup
+#   --no-hooks              Skip git hook setup
+#   --inject-husky          Auto-add the scan to husky repos' .husky/pre-commit
+#   --reconfigure-signing   Re-run signing setup even if already configured
+#                           (e.g. to switch an existing key to Secretive)
+#   --signing-method M      secretive | passphrase  (skip the prompt; pick M)
+#   -h, --help              Show this help
 # ------------------------------------------------------------------
 set -euo pipefail
 
@@ -27,14 +30,17 @@ set -euo pipefail
 #   SYNUP_REPO_REF=add-precommit-hooks-and-signing ./install.sh
 REPO_URL="${SYNUP_REPO_URL:-https://github.com/synup/security-workflows.git}"
 REPO_REF="${SYNUP_REPO_REF:-}"
-INSTALL_DIR="${SYNUP_HOME:-$HOME/.synup}/security-workflows"
+SYNUP_HOME_DIR="${SYNUP_HOME:-$HOME/.synup}"
+INSTALL_DIR="$SYNUP_HOME_DIR/security-workflows"
 HOOKS_DIR="$INSTALL_DIR/hooks"
-ALLOWED_SIGNERS="${SYNUP_HOME:-$HOME/.synup}/allowed_signers"
+ALLOWED_SIGNERS="$SYNUP_HOME_DIR/allowed_signers"
 
 ROOT_DIR="$PWD"
 DO_SIGNING=1
 DO_HOOKS=1
 INJECT_HUSKY=0
+RECONFIGURE_SIGNING=0
+SIGNING_METHOD="${SYNUP_SIGNING_METHOD:-}"   # secretive | passphrase | "" (prompt/auto)
 
 RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYA='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 info()  { printf "%b\n" "${CYA}▸${RST} $*"; }
@@ -45,11 +51,13 @@ step()  { printf "\n%b\n" "${BLD}$*${RST}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)          ROOT_DIR="$2"; shift 2 ;;
-    --no-signing)    DO_SIGNING=0; shift ;;
-    --no-hooks)      DO_HOOKS=0; shift ;;
-    --inject-husky)  INJECT_HUSKY=1; shift ;;
-    -h|--help)       sed -n '2,30p' "$0"; exit 0 ;;
+    --root)                 ROOT_DIR="$2"; shift 2 ;;
+    --no-signing)           DO_SIGNING=0; shift ;;
+    --no-hooks)             DO_HOOKS=0; shift ;;
+    --inject-husky)         INJECT_HUSKY=1; shift ;;
+    --reconfigure-signing)  RECONFIGURE_SIGNING=1; shift ;;
+    --signing-method)       SIGNING_METHOD="$2"; shift 2 ;;
+    -h|--help)              sed -n '2,34p' "$0"; exit 0 ;;
     *)               err "unknown option: $1"; exit 2 ;;
   esac
 done
@@ -89,18 +97,29 @@ step "2/4  Wiring global git hooks (core.hooksPath)"
   git config --global core.hooksPath "$HOOKS_DIR"
   ok "core.hooksPath → $HOOKS_DIR"
   info "applies to every current and future repo on this machine"
+fi
 
-  # --- husky repos bypass the global hook (they set a local core.hooksPath) ---
-  step "    Checking for husky repos under $ROOT_DIR"
+# --- husky repos set a local core.hooksPath that overrides the global hook ---
+# Runs whenever hooks are being set up OR --inject-husky is requested, so the
+# flag still works alongside --no-hooks.
+if [ "$DO_HOOKS" = 1 ] || [ "$INJECT_HUSKY" = 1 ]; then
+  step "Checking for husky repos under $ROOT_DIR"
   husky_repos=()
   while IFS= read -r gitdir; do
-    repo="$(dirname "$gitdir")"
+    [ -n "$gitdir" ] || continue
+    repo="$(dirname "$gitdir")"                       # works for .git dir OR worktree .git file
     local_hp="$(git -C "$repo" config --local core.hooksPath 2>/dev/null || true)"
     [ -n "$local_hp" ] && husky_repos+=("$repo")
-  done < <(find "$ROOT_DIR" -maxdepth 3 -name .git -type d 2>/dev/null)
+  done < <(find "$ROOT_DIR" -name node_modules -prune -o -name .git -print 2>/dev/null)
 
   if [ ${#husky_repos[@]} -eq 0 ]; then
-    ok "no husky/local-hooksPath repos found"
+    if [ "$INJECT_HUSKY" = 1 ]; then
+      warn "--inject-husky: no husky repos found under '$ROOT_DIR'."
+      warn "  Point --root at the folder that CONTAINS your repos, e.g.:"
+      warn "    --root ~/Documents/synup-projects"
+    else
+      ok "no husky/local-hooksPath repos found"
+    fi
   else
     SNIPPET_MARK="# >>> synup malware scan >>>"
     SNIPPET="$SNIPPET_MARK
@@ -159,18 +178,66 @@ step "3/4  Configuring SSH commit signing"
   }
 
   if [ "$(git config --global commit.gpgsign 2>/dev/null)" = "true" ] \
-     && [ -n "$(git config --global user.signingkey 2>/dev/null)" ]; then
+     && [ -n "$(git config --global user.signingkey 2>/dev/null)" ] \
+     && [ "$RECONFIGURE_SIGNING" != 1 ]; then
     ok "commit signing already configured (key: $(git config --global user.signingkey))"
+    info "to switch it (e.g. to Secretive), re-run with --reconfigure-signing"
   else
+    # --reconfigure-signing: clear our prior signing config so detection starts
+    # clean and can switch key types (e.g. file key → Secure Enclave). Guarded
+    # so we only drop config we created, never a developer's own setup.
+    if [ "$RECONFIGURE_SIGNING" = 1 ]; then
+      prog="$(git config --global gpg.ssh.program 2>/dev/null || true)"
+      case "$prog" in "$SYNUP_HOME_DIR"/*) git config --global --unset gpg.ssh.program 2>/dev/null || true ;; esac
+      info "reconfiguring signing (clearing previous synup signing config)…"
+    fi
+
     SE_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
     SE_PUB=""
     if [ -S "$SE_SOCK" ]; then
-      SE_PUB="$(SSH_AUTH_SOCK="$SE_SOCK" ssh-add -L 2>/dev/null | grep -m1 '^ssh-' || true)"
+      # Match any SSH public-key type. Secure Enclave keys are ECDSA P-256
+      # (ecdsa-sha2-nistp256), so a plain '^ssh-' match misses them.
+      SE_PUB="$(SSH_AUTH_SOCK="$SE_SOCK" ssh-add -L 2>/dev/null | grep -m1 -E '^(ssh-|ecdsa-|sk-)' || true)"
+    fi
+
+    # Can we open the controlling terminal to prompt? (-e /dev/tty isn't enough —
+    # the node exists even when it's not usable, e.g. in CI.)
+    HAVE_TTY=0
+    if ( exec 3<>/dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
+
+    # ---- choose the signing method: --signing-method/env > prompt > auto ----
+    case "$SIGNING_METHOD" in
+      secretive|passphrase) METHOD="$SIGNING_METHOD" ;;
+      ""|auto)              METHOD="" ;;
+      *) warn "unknown --signing-method '$SIGNING_METHOD' — ignoring"; METHOD="" ;;
+    esac
+    if [ -z "$METHOD" ] && [ "$HAVE_TTY" = 1 ]; then
+      if [ -n "$SE_PUB" ]; then se_tag="detected ✓ — recommended"; def=1; else se_tag="not set up; needs Secretive app + a key"; def=2; fi
+      printf "\nChoose your commit-signing method:\n" > /dev/tty
+      printf "  1) Secure Enclave via Secretive  [%s]\n" "$se_tag" > /dev/tty
+      printf "  2) Passphrase-protected key file\n" > /dev/tty
+      printf "Enter choice [%s]: " "$def" > /dev/tty
+      IFS= read -r choice < /dev/tty; [ -z "$choice" ] && choice="$def"
+      case "$choice" in
+        1) METHOD=secretive ;;
+        2) METHOD=passphrase ;;
+        *) warn "invalid choice — using passphrase"; METHOD=passphrase ;;
+      esac
+    fi
+    [ -z "$METHOD" ] && { [ -n "$SE_PUB" ] && METHOD=secretive || METHOD=passphrase; }   # non-interactive auto
+    if [ "$METHOD" = secretive ] && [ -z "$SE_PUB" ]; then
+      if [ -d "/Applications/Secretive.app" ]; then
+        warn "Secretive is installed but has no key yet — create one in the app, then re-run with --reconfigure-signing."
+      else
+        warn "Secretive not detected (install it + create a key first: https://github.com/maxgoedjen/secretive )."
+      fi
+      warn "Using a passphrased file key for now."
+      METHOD=passphrase
     fi
 
     # ---------- Path A: Secure Enclave via Secretive (key never touches disk) ----------
-    if [ -n "$SE_PUB" ]; then
-      info "Secure Enclave key found (Secretive) — using it for signing (private key stays in the chip)"
+    if [ "$METHOD" = secretive ]; then
+      info "Using Secure Enclave (Secretive) — private key stays in the chip, can't be copied off disk"
       SE_PUBFILE="${SYNUP_HOME:-$HOME/.synup}/secretive_signing.pub"
       printf '%s\n' "$SE_PUB" > "$SE_PUBFILE"
 
@@ -189,21 +256,10 @@ EOF
 
     # ---------- Path B: dedicated, passphrase-protected file key ----------
     else
-      if [ -d "/Applications/Secretive.app" ]; then
-        warn "Secretive is installed but has no key yet — create one in the Secretive app for"
-        warn "  hardware-backed signing, then re-run. Falling back to a passphrased file key for now."
-      else
-        info "Secretive (Secure Enclave) not detected — using a dedicated passphrased file key"
-        info "  (strongest option is Secretive: https://github.com/maxgoedjen/secretive )"
-      fi
+      info "Using a dedicated passphrase-protected key file"
 
       KEY="$HOME/.ssh/synup_signing_ed25519"
       git config --global --unset gpg.ssh.program 2>/dev/null || true
-
-      # Can we actually open the controlling terminal to prompt? (-e /dev/tty
-      # isn't enough — the node exists even when it's not usable, e.g. in CI.)
-      HAVE_TTY=0
-      if ( exec 3<>/dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
 
       if [ -f "$KEY.pub" ]; then
         info "reusing existing dedicated signing key: $KEY.pub"
