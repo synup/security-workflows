@@ -165,7 +165,9 @@ step "3/4  Configuring SSH commit signing"
     SE_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
     SE_PUB=""
     if [ -S "$SE_SOCK" ]; then
-      SE_PUB="$(SSH_AUTH_SOCK="$SE_SOCK" ssh-add -L 2>/dev/null | grep -m1 '^ssh-' || true)"
+      # Match any SSH public-key type. Secure Enclave keys are ECDSA P-256
+      # (ecdsa-sha2-nistp256), so a plain '^ssh-' match misses them.
+      SE_PUB="$(SSH_AUTH_SOCK="$SE_SOCK" ssh-add -L 2>/dev/null | grep -m1 -E '^(ssh-|ecdsa-|sk-)' || true)"
     fi
 
     # ---------- Path A: Secure Enclave via Secretive (key never touches disk) ----------
