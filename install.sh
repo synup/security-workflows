@@ -121,23 +121,43 @@ if [ "$DO_HOOKS" = 1 ] || [ "$INJECT_HUSKY" = 1 ]; then
       ok "no husky/local-hooksPath repos found"
     fi
   else
-    SNIPPET_MARK="# >>> synup malware scan >>>"
-    SNIPPET="$SNIPPET_MARK
-\"$HOOKS_DIR/pre-commit\" || exit \$?
-# <<< synup malware scan <<<"
+    MARK_START="# >>> synup malware scan >>>"
+    MARK_END="# <<< synup malware scan <<<"
+    SNIPPET="$MARK_START
+\"$HOOKS_DIR/pre-commit\" || exit \$?   # runs FIRST; blocks the commit before husky's hooks
+$MARK_END"
+
+    # Wire our scan at the TOP of .husky/pre-commit so it runs before lint-staged
+    # / npm hooks (which could otherwise exit first and skip the scan). Idempotent
+    # and self-healing: strips any prior block (incl. old bottom-injected ones)
+    # and re-inserts at the top.
+    inject_husky() {
+      local hk="$1"
+      mkdir -p "$(dirname "$hk")"
+      if [ ! -f "$hk" ]; then
+        printf '#!/usr/bin/env sh\n%s\n' "$SNIPPET" > "$hk"; chmod +x "$hk"; return 0
+      fi
+      local t1 t2; t1="$(mktemp)"; t2="$(mktemp)"
+      # 1) remove any existing synup block (index() = literal match, no regex)
+      awk -v s="$MARK_START" -v e="$MARK_END" '
+        index($0,s){skip=1} skip!=1{print} index($0,e){skip=0}' "$hk" > "$t1"
+      # 2) re-insert immediately after the shebang (or at the very top if none)
+      if head -1 "$t1" | grep -q '^#!'; then
+        { head -1 "$t1"; printf '%s\n' "$SNIPPET"; tail -n +2 "$t1"; } > "$t2"
+      else
+        { printf '%s\n' "$SNIPPET"; cat "$t1"; } > "$t2"
+      fi
+      cat "$t2" > "$hk"; rm -f "$t1" "$t2"; chmod +x "$hk"
+    }
+
     for repo in "${husky_repos[@]}"; do
       hk="$repo/.husky/pre-commit"
       if [ "$INJECT_HUSKY" = 1 ]; then
-        mkdir -p "$repo/.husky"
-        if [ -f "$hk" ] && grep -qF "$SNIPPET_MARK" "$hk"; then
-          ok "husky already wired: ${repo#"$ROOT_DIR"/}"
-        else
-          printf "%s\n" "$SNIPPET" >> "$hk"; chmod +x "$hk"
-          ok "injected scan into ${repo#"$ROOT_DIR"/}/.husky/pre-commit (commit this change)"
-        fi
+        inject_husky "$hk"
+        ok "wired scan at TOP of ${repo#"$ROOT_DIR"/}/.husky/pre-commit (commit this change)"
       else
         warn "husky repo bypasses global hook: ${repo#"$ROOT_DIR"/}"
-        warn "  add this to its .husky/pre-commit (or re-run with --inject-husky):"
+        warn "  re-run with --inject-husky to wire it (our scan runs before husky's hooks), or add near the top of .husky/pre-commit:"
         printf "%b\n" "    ${CYA}\"$HOOKS_DIR/pre-commit\" || exit \$?${RST}"
       fi
     done
