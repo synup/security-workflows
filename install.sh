@@ -14,11 +14,13 @@
 #   # or, from a clone:  ./install.sh [options]
 #
 # Options:
-#   --root DIR        Directory to scan for husky repos (default: $PWD)
-#   --no-signing      Skip SSH commit-signing setup
-#   --no-hooks        Skip git hook setup
-#   --inject-husky    Auto-add the scan to husky repos' .husky/pre-commit
-#   -h, --help        Show this help
+#   --root DIR              Directory to scan for husky repos (default: $PWD)
+#   --no-signing            Skip SSH commit-signing setup
+#   --no-hooks              Skip git hook setup
+#   --inject-husky          Auto-add the scan to husky repos' .husky/pre-commit
+#   --reconfigure-signing   Re-run signing setup even if already configured
+#                           (e.g. to switch an existing key to Secretive)
+#   -h, --help              Show this help
 # ------------------------------------------------------------------
 set -euo pipefail
 
@@ -27,14 +29,16 @@ set -euo pipefail
 #   SYNUP_REPO_REF=add-precommit-hooks-and-signing ./install.sh
 REPO_URL="${SYNUP_REPO_URL:-https://github.com/synup/security-workflows.git}"
 REPO_REF="${SYNUP_REPO_REF:-}"
-INSTALL_DIR="${SYNUP_HOME:-$HOME/.synup}/security-workflows"
+SYNUP_HOME_DIR="${SYNUP_HOME:-$HOME/.synup}"
+INSTALL_DIR="$SYNUP_HOME_DIR/security-workflows"
 HOOKS_DIR="$INSTALL_DIR/hooks"
-ALLOWED_SIGNERS="${SYNUP_HOME:-$HOME/.synup}/allowed_signers"
+ALLOWED_SIGNERS="$SYNUP_HOME_DIR/allowed_signers"
 
 ROOT_DIR="$PWD"
 DO_SIGNING=1
 DO_HOOKS=1
 INJECT_HUSKY=0
+RECONFIGURE_SIGNING=0
 
 RED='\033[0;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYA='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 info()  { printf "%b\n" "${CYA}▸${RST} $*"; }
@@ -45,11 +49,12 @@ step()  { printf "\n%b\n" "${BLD}$*${RST}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)          ROOT_DIR="$2"; shift 2 ;;
-    --no-signing)    DO_SIGNING=0; shift ;;
-    --no-hooks)      DO_HOOKS=0; shift ;;
-    --inject-husky)  INJECT_HUSKY=1; shift ;;
-    -h|--help)       sed -n '2,30p' "$0"; exit 0 ;;
+    --root)                 ROOT_DIR="$2"; shift 2 ;;
+    --no-signing)           DO_SIGNING=0; shift ;;
+    --no-hooks)             DO_HOOKS=0; shift ;;
+    --inject-husky)         INJECT_HUSKY=1; shift ;;
+    --reconfigure-signing)  RECONFIGURE_SIGNING=1; shift ;;
+    -h|--help)              sed -n '2,32p' "$0"; exit 0 ;;
     *)               err "unknown option: $1"; exit 2 ;;
   esac
 done
@@ -159,9 +164,20 @@ step "3/4  Configuring SSH commit signing"
   }
 
   if [ "$(git config --global commit.gpgsign 2>/dev/null)" = "true" ] \
-     && [ -n "$(git config --global user.signingkey 2>/dev/null)" ]; then
+     && [ -n "$(git config --global user.signingkey 2>/dev/null)" ] \
+     && [ "$RECONFIGURE_SIGNING" != 1 ]; then
     ok "commit signing already configured (key: $(git config --global user.signingkey))"
+    info "to switch it (e.g. to Secretive), re-run with --reconfigure-signing"
   else
+    # --reconfigure-signing: clear our prior signing config so detection starts
+    # clean and can switch key types (e.g. file key → Secure Enclave). Guarded
+    # so we only drop config we created, never a developer's own setup.
+    if [ "$RECONFIGURE_SIGNING" = 1 ]; then
+      prog="$(git config --global gpg.ssh.program 2>/dev/null || true)"
+      case "$prog" in "$SYNUP_HOME_DIR"/*) git config --global --unset gpg.ssh.program 2>/dev/null || true ;; esac
+      info "reconfiguring signing (clearing previous synup signing config)…"
+    fi
+
     SE_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
     SE_PUB=""
     if [ -S "$SE_SOCK" ]; then
