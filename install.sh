@@ -97,18 +97,29 @@ step "2/4  Wiring global git hooks (core.hooksPath)"
   git config --global core.hooksPath "$HOOKS_DIR"
   ok "core.hooksPath → $HOOKS_DIR"
   info "applies to every current and future repo on this machine"
+fi
 
-  # --- husky repos bypass the global hook (they set a local core.hooksPath) ---
-  step "    Checking for husky repos under $ROOT_DIR"
+# --- husky repos set a local core.hooksPath that overrides the global hook ---
+# Runs whenever hooks are being set up OR --inject-husky is requested, so the
+# flag still works alongside --no-hooks.
+if [ "$DO_HOOKS" = 1 ] || [ "$INJECT_HUSKY" = 1 ]; then
+  step "Checking for husky repos under $ROOT_DIR"
   husky_repos=()
   while IFS= read -r gitdir; do
-    repo="$(dirname "$gitdir")"
+    [ -n "$gitdir" ] || continue
+    repo="$(dirname "$gitdir")"                       # works for .git dir OR worktree .git file
     local_hp="$(git -C "$repo" config --local core.hooksPath 2>/dev/null || true)"
     [ -n "$local_hp" ] && husky_repos+=("$repo")
-  done < <(find "$ROOT_DIR" -maxdepth 3 -name .git -type d 2>/dev/null)
+  done < <(find "$ROOT_DIR" -name node_modules -prune -o -name .git -print 2>/dev/null)
 
   if [ ${#husky_repos[@]} -eq 0 ]; then
-    ok "no husky/local-hooksPath repos found"
+    if [ "$INJECT_HUSKY" = 1 ]; then
+      warn "--inject-husky: no husky repos found under '$ROOT_DIR'."
+      warn "  Point --root at the folder that CONTAINS your repos, e.g.:"
+      warn "    --root ~/Documents/synup-projects"
+    else
+      ok "no husky/local-hooksPath repos found"
+    fi
   else
     SNIPPET_MARK="# >>> synup malware scan >>>"
     SNIPPET="$SNIPPET_MARK
