@@ -2,8 +2,10 @@
 #
 # Synup org pre-commit hook
 # ------------------------------------------------------------------
-# 1. Runs scan_malware.py against the *staged* content of this commit
-#    and blocks the commit on any high/critical finding.
+# 1. Runs the modular scanner (scripts/scan/runner.py — secrets, sensitive_files,
+#    malware, dangerous_code) against the *staged* content of this commit and
+#    blocks the commit on any high/critical finding. Self-contained: it does NOT
+#    depend on the legacy scan_malware.py (that's only used by the CI workflow).
 # 2. Chains to any repo-local hooks (.git/hooks/pre-commit, .husky/pre-commit)
 #    so existing project hooks keep working under a global core.hooksPath.
 #
