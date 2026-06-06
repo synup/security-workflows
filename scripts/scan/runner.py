@@ -103,12 +103,49 @@ def main() -> int:
     ap.add_argument("--report", metavar="FILE")
     ap.add_argument("--config", metavar="FILE", help="path to .synup-scan.json (default: ./.synup-scan.json)")
     ap.add_argument("--disable", default="", help="comma-separated checks to skip")
-    ap.add_argument("--list-checks", action="store_true")
+    ap.add_argument("--list-checks", action="store_true", help="list check names")
+    ap.add_argument("--list-rules", action="store_true",
+                    help="list every check + rule (id, severity, blocks?) — the menu for .synup-scan.json")
+    ap.add_argument("--init", action="store_true",
+                    help="write a documented .synup-scan.json template to the current dir")
     args = ap.parse_args()
 
     if args.list_checks:
         for m in ALL:
             print(m.NAME)
+        return 0
+
+    if args.list_rules:
+        print(f"{BLD}Synup scan — available checks & rules{RST}  "
+              f"(BLOCKS = high/critical fail the commit; warn = reported only)\n")
+        for m in ALL:
+            print(f"{BLD}{m.NAME}{RST}   (disable whole check: \"disable\": [\"{m.NAME}\"])")
+            for rid, sev, desc in m.catalog():
+                tag = f"{RED}BLOCKS{RST}" if sev in ("high", "critical") else f"{YEL}warn  {RST}"
+                print(f"   {tag}  [{sev:8}] {m.NAME}.{rid:22} {desc}")
+            print()
+        print("Disable one rule:  \"<check>\": { \"disable_rules\": [\"<rule>\"] }")
+        print("Skip paths:        \"allow\": [\"glob/**\"]      Inline: add `synup-ignore` to a line.")
+        return 0
+
+    if args.init:
+        dest = Path.cwd() / ".synup-scan.json"
+        if dest.exists():
+            print(f"{YEL}{dest} already exists — not overwriting.{RST}", file=sys.stderr)
+            return 1
+        tmpl = {
+            "_README": "Synup scan config. Run `runner.py --list-rules` to see every option. "
+                       "Add a check name to 'disable' to turn it off; add a rule id under "
+                       "'<check>.disable_rules' to turn off one rule; 'allow' skips path globs.",
+            "disable": [],
+            "min_severity": "high",
+            "allow": [],
+        }
+        for m in ALL:
+            tmpl[m.NAME] = {"disable_rules": []}
+        tmpl["_available"] = {m.NAME: [rid for rid, _, _ in m.catalog()] for m in ALL}
+        dest.write_text(_json.dumps(tmpl, indent=2) + "\n", encoding="utf-8")
+        print(f"{GRN}wrote {dest}{RST}  — edit it, then commit it to your repo.")
         return 0
 
     root = Path(args.path).resolve()

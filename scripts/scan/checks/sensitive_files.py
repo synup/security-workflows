@@ -51,3 +51,7 @@ def check(path: Path, rel: str, text: str, lines, disabled_rules):
                                snippet=f"committing '{rel}'", detail=rule_id))
             break  # one finding per file is enough
     return out
+
+
+def catalog():
+    return [(b[0], b[1], b[2]) for b in BLOCK]

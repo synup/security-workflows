@@ -64,3 +64,7 @@ def check(path: Path, rel: str, text: str, lines, disabled_rules):
             out.append(Finding(sev, NAME, desc, rel, ln,
                                clip(lines[ln - 1] if ln <= len(lines) else m.group()), detail=rule_id))
     return out
+
+
+def catalog():
+    return [(r[0], r[1], r[2]) for r in RULES]

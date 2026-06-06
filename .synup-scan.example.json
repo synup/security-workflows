@@ -1,29 +1,111 @@
 {
-  "_comment": "Copy to .synup-scan.json in a repo root to customize the pre-commit scan. All keys are optional.",
-
-  "disable": ["dangerous_code"],
-
+  "_README": "Synup scan config. Run `runner.py --list-rules` to see every option. Add a check name to 'disable' to turn it off; add a rule id under '<check>.disable_rules' to turn off one rule; 'allow' skips path globs.",
+  "disable": [],
   "min_severity": "high",
-
-  "allow": [
-    "test/fixtures/*",
-    "docs/*",
-    "**/*.snap"
-  ],
-
+  "allow": [],
   "secrets": {
-    "disable_rules": ["jwt", "stripe_pub"]
+    "disable_rules": []
   },
-
-  "dangerous_code": {
-    "disable_rules": ["weak_hash", "subprocess_shell_true"]
-  },
-
   "sensitive_files": {
     "disable_rules": []
   },
-
   "malware": {
-    "disable_rules": ["c2_domain"]
+    "disable_rules": []
+  },
+  "dangerous_code": {
+    "disable_rules": []
+  },
+  "_available": {
+    "secrets": [
+      "aws_access_key",
+      "gcp_api_key",
+      "gcp_oauth",
+      "github_pat",
+      "github_fine_pat",
+      "slack_token",
+      "slack_webhook",
+      "stripe_secret",
+      "stripe_pub",
+      "twilio_sid",
+      "sendgrid",
+      "mailgun",
+      "npm_token",
+      "pypi_token",
+      "openai",
+      "anthropic",
+      "telegram_bot",
+      "square",
+      "shopify",
+      "private_key",
+      "jwt",
+      "db_uri_creds",
+      "npmrc_token",
+      "generic"
+    ],
+    "sensitive_files": [
+      "dotenv",
+      "private_key",
+      "ssh_key",
+      "pkcs12",
+      "putty_key",
+      "npmrc",
+      "pypirc",
+      "netrc",
+      "htpasswd",
+      "gcp_sa",
+      "aws_creds",
+      "kube",
+      "pkcs8"
+    ],
+    "malware": [
+      "js_global_require",
+      "js_global_module",
+      "fromcharcode_del",
+      "charat_permute",
+      "dynamic_lookup",
+      "eval_base64_decode",
+      "eval_atob",
+      "new_function_str",
+      "py_exec_compile",
+      "ruby_eval_b64",
+      "marshal_load",
+      "bash_revshell",
+      "nc_revshell",
+      "py_revshell",
+      "py_revshell2",
+      "curl_pipe_sh",
+      "crypto_miner",
+      "php_webshell",
+      "ruby_open_pipe",
+      "npm_lifecycle_curl",
+      "gem_git_url",
+      "c2_domain",
+      "authorized_keys",
+      "cron_tamper",
+      "hex_escapes",
+      "octal_escapes",
+      "eof_marker",
+      "hidden_whitespace",
+      "long_line",
+      "entropy_string"
+    ],
+    "dangerous_code": [
+      "py_shell_injection",
+      "subprocess_shell_true",
+      "js_child_process_concat",
+      "sql_concat",
+      "py_pickle",
+      "py_yaml_load",
+      "ruby_yaml_load",
+      "ruby_send_user",
+      "ruby_kernel_exec",
+      "js_node_serialize",
+      "py_eval_exec",
+      "weak_hash",
+      "weak_cipher",
+      "tls_verify_off",
+      "flask_debug",
+      "disable_host_check"
+    ]
   }
 }

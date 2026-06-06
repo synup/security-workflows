@@ -127,17 +127,32 @@ python3 ~/.synup/security-workflows/scripts/scan/runner.py --list-checks
 (`scripts/scan_malware.py` is the original self-contained scanner, kept unchanged so
 the existing CI workflow keeps working as-is — see below.)
 
-#### Configuring it per repo — `.synup-scan.json`
-Drop a `.synup-scan.json` at a repo root to turn checks/rules off or allowlist paths
-(see `.synup-scan.example.json`):
+#### Configuring which scans run — `.synup-scan.json`
+Each repo controls its own scans with a **`.synup-scan.json` at its root** (committed to the
+repo, shared with the team). It is **never overwritten** by the hook's auto-update — that only
+refreshes `~/.synup`, not your project repos.
+
+**You don't need to read any code to know what's available.** Discover everything from the CLI:
+```bash
+S=~/.synup/security-workflows/scripts/scan/runner.py
+python3 "$S" --list-checks    # the 4 check names
+python3 "$S" --list-rules     # EVERY check + rule: id, severity, and whether it BLOCKS
+python3 "$S" --init           # write a starter .synup-scan.json (with the full option list inside)
+```
+`--list-rules` prints the full menu; `--init` drops a ready-to-edit `.synup-scan.json` whose
+`_available` block lists every check + rule id you can put under `disable` / `disable_rules`.
+(`.synup-scan.example.json` is the same, committed for reference.)
+
+Then edit it — turn off a whole check, a single rule, or skip paths:
 ```json
 {
   "disable": ["dangerous_code"],
   "allow": ["test/fixtures/*", "docs/*"],
-  "secrets": { "disable_rules": ["jwt"] }
+  "secrets": { "disable_rules": ["jwt", "stripe_pub"] },
+  "min_severity": "high"
 }
 ```
-Suppress a single line inline by adding a `synup-ignore` comment to it.
+Or suppress one line inline with a `synup-ignore` comment.
 
 ### Fully offline — no dependencies
 The scanner is **pure Python standard library** — nothing to `pip install`, no binaries,
