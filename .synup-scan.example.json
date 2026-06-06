@@ -1,0 +1,29 @@
+{
+  "_comment": "Copy to .synup-scan.json in a repo root to customize the pre-commit scan. All keys are optional.",
+
+  "disable": ["dangerous_code"],
+
+  "min_severity": "high",
+
+  "allow": [
+    "test/fixtures/*",
+    "docs/*",
+    "**/*.snap"
+  ],
+
+  "secrets": {
+    "disable_rules": ["jwt", "stripe_pub"]
+  },
+
+  "dangerous_code": {
+    "disable_rules": ["weak_hash", "subprocess_shell_true"]
+  },
+
+  "sensitive_files": {
+    "disable_rules": []
+  },
+
+  "malware": {
+    "disable_rules": ["c2_domain"]
+  }
+}

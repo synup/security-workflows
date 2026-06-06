@@ -23,7 +23,7 @@ set -uo pipefail
 export SYNUP_PRECOMMIT_ACTIVE=1
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCANNER="$HOOK_DIR/../scripts/scan_malware.py"
+SCANNER="$HOOK_DIR/../scripts/scan/runner.py"   # modular scanner (secrets/sensitive_files/malware/dangerous_code)
 INSTALL_DIR="$(cd "$HOOK_DIR/.." && pwd)"
 UPDATE_STAMP="$(dirname "$INSTALL_DIR")/.synup_hook_last_update"
 UPDATE_INTERVAL="${SYNUP_HOOK_UPDATE_INTERVAL:-86400}"   # seconds between update checks; 0 disables
