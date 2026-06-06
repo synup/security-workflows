@@ -3,13 +3,24 @@
 # Synup org git-hooks uninstaller — reverses install.sh.
 # Keeps your SSH keys; only unsets the git config it added.
 #
-# Usage: ./uninstall.sh [--keep-signing]
+# Usage: ./uninstall.sh [--keep-signing] [--root DIR]
+#   --root DIR  Where to look for husky repos to clean (default: current dir)
 set -euo pipefail
 
 SYNUP_HOME_DIR="${SYNUP_HOME:-$HOME/.synup}"
 HOOKS_DIR="$SYNUP_HOME_DIR/security-workflows/hooks"
 KEEP_SIGNING=0
-[ "${1:-}" = "--keep-signing" ] && KEEP_SIGNING=1
+ROOT_DIR="$PWD"
+MARK_START="# >>> synup malware scan >>>"
+MARK_END="# <<< synup malware scan <<<"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --keep-signing) KEEP_SIGNING=1; shift ;;
+    --root)         ROOT_DIR="$2"; shift 2 ;;
+    *)              echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
 
 GRN='\033[0;32m'; YEL='\033[1;33m'; RST='\033[0m'
 ok()   { printf "%b\n" "${GRN}✓${RST} $*"; }
@@ -66,5 +77,20 @@ else
   warn "signing config kept (--keep-signing)"
 fi
 
+# --- remove our injected scan block from husky repos' .husky/pre-commit ---
+# Mirrors install.sh --inject-husky. Strips only our marked block (idempotent),
+# leaving the rest of the husky hook intact.
+husky_cleaned=0
+while IFS= read -r hk; do
+  [ -n "$hk" ] || continue
+  grep -qF "$MARK_START" "$hk" 2>/dev/null || continue
+  tmp="$(mktemp)"
+  awk -v s="$MARK_START" -v e="$MARK_END" \
+    'index($0,s){skip=1} skip!=1{print} index($0,e){skip=0}' "$hk" > "$tmp"
+  cat "$tmp" > "$hk"; rm -f "$tmp"
+  ok "removed scan block from ${hk#"$ROOT_DIR"/}"
+  husky_cleaned=1
+done < <(find "$ROOT_DIR" -name node_modules -prune -o -path '*/.husky/pre-commit' -print 2>/dev/null)
+[ "$husky_cleaned" = 1 ] && warn "commit those .husky/pre-commit change(s) so teammates' repos update too"
+
 ok "Uninstalled. Your repos and SSH key FILES are untouched (only git/ssh config was reverted)."
-warn "Husky repos with an injected scan line: remove the '# >>> synup malware scan >>>' block manually."

@@ -134,14 +134,21 @@ jobs:
 
 Husky sets a **local** `core.hooksPath` (e.g. `.husky/_`) that overrides the global
 one, so the global hook is bypassed there. The installer detects these and either
-warns you or, with `--inject-husky`, appends this to `.husky/pre-commit` (commit the
-change so teammates get it):
+warns you or, with `--inject-husky`, inserts this block at the **top** of
+`.husky/pre-commit` — so the malware scan **runs first** and blocks the commit before
+husky's own hooks (lint-staged, etc.) run (commit the change so teammates get it):
 
 ```sh
+#!/usr/bin/env sh
 # >>> synup malware scan >>>
 "$HOME/.synup/security-workflows/hooks/pre-commit" || exit $?
 # <<< synup malware scan <<<
+. "$(dirname -- "$0")/_/husky.sh"   # ← your existing husky hook continues below
+npx lint-staged
 ```
+
+Both run, ours first. Re-running `--inject-husky` is idempotent and will reposition an
+older bottom-injected block to the top.
 
 ---
 

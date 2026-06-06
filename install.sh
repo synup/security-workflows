@@ -17,7 +17,9 @@
 #   --root DIR              Directory to scan for husky repos (default: $PWD)
 #   --no-signing            Skip SSH commit-signing setup
 #   --no-hooks              Skip git hook setup
-#   --inject-husky          Auto-add the scan to husky repos' .husky/pre-commit
+#   --no-husky              Don't auto-wire husky repos (husky wiring is ON by default)
+#   --inject-husky [DIR]    Wire husky repos now; with DIR, wire just that one
+#                           repo (e.g. one cloned after the initial install)
 #   --reconfigure-signing   Re-run signing setup even if already configured
 #                           (e.g. to switch an existing key to Secretive)
 #   --signing-method M      secretive | passphrase  (skip the prompt; pick M)
@@ -38,7 +40,8 @@ ALLOWED_SIGNERS="$SYNUP_HOME_DIR/allowed_signers"
 ROOT_DIR="$PWD"
 DO_SIGNING=1
 DO_HOOKS=1
-INJECT_HUSKY=0
+INJECT_HUSKY=1          # husky repos are wired automatically by default; --no-husky opts out
+HUSKY_REPO=""           # --inject-husky DIR targets one specific repo (e.g. one cloned after install)
 RECONFIGURE_SIGNING=0
 SIGNING_METHOD="${SYNUP_SIGNING_METHOD:-}"   # secretive | passphrase | "" (prompt/auto)
 
@@ -54,7 +57,10 @@ while [ $# -gt 0 ]; do
     --root)                 ROOT_DIR="$2"; shift 2 ;;
     --no-signing)           DO_SIGNING=0; shift ;;
     --no-hooks)             DO_HOOKS=0; shift ;;
-    --inject-husky)         INJECT_HUSKY=1; shift ;;
+    --no-husky)             INJECT_HUSKY=0; shift ;;
+    --inject-husky)         # optional DIR arg → wire just that repo (e.g. one added after install)
+                            INJECT_HUSKY=1
+                            if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then HUSKY_REPO="$2"; shift 2; else shift; fi ;;
     --reconfigure-signing)  RECONFIGURE_SIGNING=1; shift ;;
     --signing-method)       SIGNING_METHOD="$2"; shift 2 ;;
     -h|--help)              sed -n '2,34p' "$0"; exit 0 ;;
@@ -100,47 +106,76 @@ step "2/4  Wiring global git hooks (core.hooksPath)"
 fi
 
 # --- husky repos set a local core.hooksPath that overrides the global hook ---
-# Runs whenever hooks are being set up OR --inject-husky is requested, so the
-# flag still works alongside --no-hooks.
+# By DEFAULT we auto-wire every husky repo found under --root (husky bypasses the
+# global hook otherwise). --no-husky skips this; --inject-husky DIR targets just
+# one repo (handy for a repo cloned AFTER the initial install).
 if [ "$DO_HOOKS" = 1 ] || [ "$INJECT_HUSKY" = 1 ]; then
-  step "Checking for husky repos under $ROOT_DIR"
-  husky_repos=()
-  while IFS= read -r gitdir; do
-    [ -n "$gitdir" ] || continue
-    repo="$(dirname "$gitdir")"                       # works for .git dir OR worktree .git file
-    local_hp="$(git -C "$repo" config --local core.hooksPath 2>/dev/null || true)"
-    [ -n "$local_hp" ] && husky_repos+=("$repo")
-  done < <(find "$ROOT_DIR" -name node_modules -prune -o -name .git -print 2>/dev/null)
+  MARK_START="# >>> synup malware scan >>>"
+  MARK_END="# <<< synup malware scan <<<"
+  SNIPPET="$MARK_START
+\"$HOOKS_DIR/pre-commit\" || exit \$?   # runs FIRST; blocks the commit before husky's hooks
+$MARK_END"
 
-  if [ ${#husky_repos[@]} -eq 0 ]; then
-    if [ "$INJECT_HUSKY" = 1 ]; then
-      warn "--inject-husky: no husky repos found under '$ROOT_DIR'."
-      warn "  Point --root at the folder that CONTAINS your repos, e.g.:"
-      warn "    --root ~/Documents/synup-projects"
+  # Wire our scan at the TOP of .husky/pre-commit so it runs before lint-staged /
+  # npm hooks (which could otherwise exit first and skip the scan). Idempotent &
+  # self-healing: strips any prior block (incl. old bottom-injected ones), re-tops.
+  inject_husky() {
+    local hk="$1"
+    mkdir -p "$(dirname "$hk")"
+    if [ ! -f "$hk" ]; then
+      printf '#!/usr/bin/env sh\n%s\n' "$SNIPPET" > "$hk"; chmod +x "$hk"; return 0
+    fi
+    local t1 t2; t1="$(mktemp)"; t2="$(mktemp)"
+    awk -v s="$MARK_START" -v e="$MARK_END" '
+      index($0,s){skip=1} skip!=1{print} index($0,e){skip=0}' "$hk" > "$t1"
+    if head -1 "$t1" | grep -q '^#!'; then
+      { head -1 "$t1"; printf '%s\n' "$SNIPPET"; tail -n +2 "$t1"; } > "$t2"
     else
-      ok "no husky/local-hooksPath repos found"
+      { printf '%s\n' "$SNIPPET"; cat "$t1"; } > "$t2"
+    fi
+    # Only touch the file if the result actually differs (block missing or not at
+    # top) — an already-correctly-wired hook is left byte-for-byte unchanged.
+    if cmp -s "$t2" "$hk"; then rm -f "$t1" "$t2"; return 1; fi
+    cat "$t2" > "$hk"; rm -f "$t1" "$t2"; chmod +x "$hk"; return 0
+  }
+
+  is_husky_repo() { [ -d "$1/.husky" ] || [ -n "$(git -C "$1" config --local core.hooksPath 2>/dev/null || true)" ]; }
+
+  husky_repos=()
+  if [ -n "$HUSKY_REPO" ]; then
+    step "Wiring husky repo: $HUSKY_REPO"
+    if is_husky_repo "$HUSKY_REPO"; then
+      husky_repos+=("$HUSKY_REPO")
+    else
+      warn "'$HUSKY_REPO' isn't a husky repo (no .husky/ or local core.hooksPath) — the global hook already covers it"
     fi
   else
-    SNIPPET_MARK="# >>> synup malware scan >>>"
-    SNIPPET="$SNIPPET_MARK
-\"$HOOKS_DIR/pre-commit\" || exit \$?
-# <<< synup malware scan <<<"
+    step "Scanning for husky repos under $ROOT_DIR"
+    while IFS= read -r gitdir; do
+      [ -n "$gitdir" ] || continue
+      repo="$(dirname "$gitdir")"                       # works for .git dir OR worktree .git file
+      [ -n "$(git -C "$repo" config --local core.hooksPath 2>/dev/null || true)" ] && husky_repos+=("$repo")
+    done < <(find "$ROOT_DIR" -name node_modules -prune -o -name .git -print 2>/dev/null)
+  fi
+
+  if [ ${#husky_repos[@]} -eq 0 ]; then
+    [ -z "$HUSKY_REPO" ] && ok "no husky repos found under $ROOT_DIR"
+  else
+    changed_any=0
     for repo in "${husky_repos[@]}"; do
       hk="$repo/.husky/pre-commit"
       if [ "$INJECT_HUSKY" = 1 ]; then
-        mkdir -p "$repo/.husky"
-        if [ -f "$hk" ] && grep -qF "$SNIPPET_MARK" "$hk"; then
-          ok "husky already wired: ${repo#"$ROOT_DIR"/}"
+        if inject_husky "$hk"; then
+          ok "wired scan at TOP of ${repo#"$ROOT_DIR"/}/.husky/pre-commit"
+          changed_any=1
         else
-          printf "%s\n" "$SNIPPET" >> "$hk"; chmod +x "$hk"
-          ok "injected scan into ${repo#"$ROOT_DIR"/}/.husky/pre-commit (commit this change)"
+          ok "already wired (scan-first): ${repo#"$ROOT_DIR"/}"
         fi
       else
-        warn "husky repo bypasses global hook: ${repo#"$ROOT_DIR"/}"
-        warn "  add this to its .husky/pre-commit (or re-run with --inject-husky):"
-        printf "%b\n" "    ${CYA}\"$HOOKS_DIR/pre-commit\" || exit \$?${RST}"
+        warn "husky repo not wired (--no-husky): ${repo#"$ROOT_DIR"/}"
       fi
     done
+    [ "$changed_any" = 1 ] && info "commit the changed .husky/pre-commit file(s) so teammates get scan-first too"
   fi
 fi
 
