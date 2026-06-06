@@ -334,10 +334,37 @@ EOF
 fi
 
 # ------------------------------------------------------------------
+# Convenience CLI: a `synup-scan` command on PATH (wraps the modular scanner)
+# ------------------------------------------------------------------
+BIN_DIR="$SYNUP_HOME_DIR/bin"
+mkdir -p "$BIN_DIR"
+cat > "$BIN_DIR/synup-scan" <<EOF
+#!/usr/bin/env bash
+# Synup scanner convenience wrapper. Examples:
+#   synup-scan --list-rules     # browse every check + rule
+#   synup-scan --init           # write a .synup-scan.json starter into this repo
+#   synup-scan .                # scan the current repo
+exec python3 "$INSTALL_DIR/scripts/scan/runner.py" "\$@"
+EOF
+chmod +x "$BIN_DIR/synup-scan"
+
+# Put it on PATH for interactive shells (idempotent, marker-delimited).
+PATH_BLOCK="# >>> synup-scan >>>
+export PATH=\"$BIN_DIR:\$PATH\"
+# <<< synup-scan <<<"
+added_path=0
+for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  [ -e "$rc" ] || continue
+  grep -qF ">>> synup-scan >>>" "$rc" 2>/dev/null || { printf '\n%s\n' "$PATH_BLOCK" >> "$rc"; added_path=1; }
+done
+ok "installed the 'synup-scan' command → $BIN_DIR/synup-scan"
+
+# ------------------------------------------------------------------
 step "4/4  Done"
 # ------------------------------------------------------------------
 ok "Synup security hooks installed."
+info "Browse checks: ${CYA}synup-scan --list-rules${RST}     Configure a repo: ${CYA}synup-scan --init${RST}"
+[ "$added_path" = 1 ] && info "(open a new terminal, or run: ${CYA}source ~/.zshrc${RST} — to use 'synup-scan' now)"
 info "Test it:    cd <any-repo> && echo 'AKIA1234567890ABCDEF' > t.txt && git add t.txt && git commit -m test"
 info "            (the commit should be blocked; then: rm t.txt)"
-info "Verify sig: git log --show-signature -1"
 info "Update later: re-run this installer (it pulls the latest scanner + hooks)."

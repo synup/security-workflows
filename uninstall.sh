@@ -93,4 +93,14 @@ while IFS= read -r hk; do
 done < <(find "$ROOT_DIR" -name node_modules -prune -o -path '*/.husky/pre-commit' -print 2>/dev/null)
 [ "$husky_cleaned" = 1 ] && warn "commit those .husky/pre-commit change(s) so teammates' repos update too"
 
+# --- remove the 'synup-scan' command + its PATH entry ---
+rm -f "$SYNUP_HOME_DIR/bin/synup-scan" 2>/dev/null || true
+for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  [ -f "$rc" ] && grep -qF ">>> synup-scan >>>" "$rc" 2>/dev/null || continue
+  tmp="$(mktemp)"
+  awk '/# >>> synup-scan >>>/{skip=1} skip!=1{print} /# <<< synup-scan <<</{skip=0}' "$rc" > "$tmp"
+  cat "$tmp" > "$rc"; rm -f "$tmp"
+  ok "removed 'synup-scan' from PATH in ${rc#"$HOME"/}"
+done
+
 ok "Uninstalled. Your repos and SSH key FILES are untouched (only git/ssh config was reverted)."
