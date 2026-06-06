@@ -60,29 +60,58 @@ def scan(root: Path, cfg: Config, disabled_checks: set[str]) -> list[Finding]:
     return findings
 
 
-def report_text(findings, files_note, out=sys.stdout):
-    by_sev = defaultdict(list)
-    for f in findings:
-        by_sev[f.severity].append(f)
-    totals = {s: len(by_sev.get(s, [])) for s in SEVERITY_ORDER}
-    print(f"\n{BLD}=== Synup Code Scan ==={RST}", file=out)
-    print(f"{files_note}", file=out)
-    print(f"Findings : {len(findings)}  "
-          f"({RED}critical:{totals['critical']} high:{totals['high']}{RST} "
-          f"{YEL}warn:{totals['warn']}{RST} info:{totals['info']})", file=out)
-    for sev in ("critical", "high", "warn", "info"):
-        items = by_sev.get(sev, [])
-        if not items:
-            continue
-        color = {"critical": RED, "high": RED, "warn": YEL, "info": CYA}[sev]
-        print(f"\n{color}{BLD}[{sev.upper()}]{RST}", file=out)
-        for f in items:
-            loc = f"{f.file}:{f.line}" if f.line else f.file
-            print(f"  {loc}  [{f.check}/{f.detail or f.rule}]  {f.rule}", file=out)
-            if f.snippet:
-                print(f"    {f.snippet}", file=out)
+SEV_COLOR = {"critical": RED, "high": RED, "warn": YEL, "info": CYA}
+SEV_RANK = {"critical": 0, "high": 1, "warn": 2, "info": 3}
+
+
+def _trunc(s, n):
+    s = " ".join((s or "").split())          # collapse whitespace/newlines
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def report_text(findings, path_str, checks_str, out=sys.stdout):
+    bar = "─" * 78
+    n = {s: sum(1 for f in findings if f.severity == s) for s in SEVERITY_ORDER}
+    nfiles = len({f.file for f in findings})
+    blocked = (n["critical"] + n["high"]) > 0
+
+    # ---- header banner ----
+    print(f"\n{BLD}┌{bar}┐{RST}", file=out)
     if not findings:
-        print(f"\n{GRN}No findings. Scan clean.{RST}", file=out)
+        print(f"{BLD}│{RST}  {GRN}✓ CLEAN{RST} — no findings", file=out)
+        print(f"{BLD}└{bar}┘{RST}", file=out)
+        return
+    verdict = f"{RED}✗ BLOCKED{RST}" if blocked else f"{YEL}⚠ WARNINGS ONLY{RST}"
+    summary = (f"{RED}{n['critical']} critical{RST} · {RED}{n['high']} high{RST} · "
+               f"{YEL}{n['warn']} warn{RST} · {n['info']} info   across {nfiles} file(s)")
+    print(f"{BLD}│{RST}  Synup Code Scan   {verdict}", file=out)
+    print(f"{BLD}│{RST}  {summary}", file=out)
+    print(f"{BLD}└{bar}┘{RST}", file=out)
+
+    # ---- one block per file (worst severity first), aligned table ----
+    by_file = defaultdict(list)
+    for f in findings:
+        by_file[f.file].append(f)
+    worst = lambda items: min(SEV_RANK[i.severity] for i in items)
+    for fname in sorted(by_file, key=lambda k: (worst(by_file[k]), k)):
+        rows = sorted(by_file[fname], key=lambda i: (SEV_RANK[i.severity], i.line))
+        print(f"\n{BLD}▎ {fname}{RST}", file=out)
+        print(f"  {'SEVERITY':<8}  {'RULE':<30}  {'LINE':>4}  MATCH", file=out)
+        print(f"  {'─'*8}  {'─'*30}  {'─'*4}  {'─'*34}", file=out)
+        for f in rows:
+            c = SEV_COLOR[f.severity]
+            sev = f"{c}{f.severity.upper():<8}{RST}"
+            rid = _trunc(f"{f.check}/{(f.detail or f.rule).split()[0]}", 30).ljust(30)
+            ln = (str(f.line) if f.line else "—").rjust(4)
+            print(f"  {sev}  {rid}  {ln}  {_trunc(f.snippet or f.rule, 60)}", file=out)
+
+    # ---- footer guidance ----
+    print(f"\n{BLD}{bar}{RST}", file=out)
+    if blocked:
+        print(f"  Fix the {RED}critical/high{RST} findings, then {BLD}git add{RST} + commit again.", file=out)
+    print(f"  Browse/curate checks: {YEL}synup-scan --list-rules{RST}   ·   "
+          f"per-repo config: {YEL}synup-scan --init{RST}", file=out)
+    print(f"  Scanned: {path_str}   Checks: {checks_str}", file=out)
 
 
 def report_json(findings, file_count, out=sys.stdout):
@@ -166,8 +195,8 @@ def main() -> int:
 
     findings = [f for f in scan(root, cfg, disabled_checks) if sev_ge(f.severity, min_sev)]
 
-    files_note = (f"Path     : {root}\n"
-                  f"Checks   : {', '.join(m.NAME for m in ALL if m.NAME not in disabled_checks) or '(none)'}")
+    path_str = str(root)
+    checks_str = ", ".join(m.NAME for m in ALL if m.NAME not in disabled_checks) or "(none)"
 
     if args.json:
         if args.report:
@@ -177,8 +206,8 @@ def main() -> int:
     else:
         if args.report:
             with open(args.report, "w") as fh:
-                report_text(findings, files_note, fh)
-        report_text(findings, files_note)
+                report_text(findings, path_str, checks_str, fh)
+        report_text(findings, path_str, checks_str)
 
     return 1 if any(sev_ge(f.severity, "high") for f in findings) else 0
 

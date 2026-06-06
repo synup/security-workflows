@@ -34,6 +34,17 @@ RULES = [
     ("db_uri_creds",     "high",     "DB connection string with credentials",
         re.compile(r"\b(?:postgres(?:ql)?|mysql|mariadb|mssql|sqlserver|oracle|mongodb(?:\+srv)?|cassandra|clickhouse|redis|rediss|amqps?)://[^:@\s/]*:[^@\s/]+@", re.IGNORECASE)),
     ("npmrc_token",      "critical", "npm registry auth token",      re.compile(r"//[^\s]+/:_authToken=[A-Za-z0-9_\-\.]+")),
+    ("gitlab_pat",       "critical", "GitLab personal access token",  re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b")),
+    ("gcp_sa_json",      "critical", "GCP service-account private key JSON", re.compile(r"\"type\"\s*:\s*\"service_account\"")),
+    ("heroku",           "high",     "Heroku API key (UUID)",         re.compile(r"(?i)heroku[a-z0-9_\- ]{0,20}[:=]\s*[\"']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")),
+    ("digitalocean",     "critical", "DigitalOcean token",            re.compile(r"\bdo[po]_v1_[a-f0-9]{64}\b")),
+    ("discord_token",    "high",     "Discord bot token",             re.compile(r"\b[MNO][A-Za-z0-9_\-]{23,25}\.[A-Za-z0-9_\-]{6}\.[A-Za-z0-9_\-]{27,}\b")),
+    ("discord_webhook",  "high",     "Discord webhook URL",           re.compile(r"https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_\-]+")),
+    ("cloudflare",       "critical", "Cloudflare API token",          re.compile(r"\bv1\.0-[A-Za-z0-9]{20,}-[A-Za-z0-9]{40,}\b")),
+    ("azure_storage",    "critical", "Azure storage account key",     re.compile(r"AccountKey=[A-Za-z0-9+/]{80,}==")),
+    ("datadog",          "high",     "Datadog API key",               re.compile(r"(?i)\bdd[_-]?api[_-]?key\b[\"'\s:=]{1,4}[a-f0-9]{32}\b")),
+    ("aws_secret_ctx",   "high",     "AWS secret access key (in context)", re.compile(r"(?i)aws_?secret_?access_?key\b[\"'\s:=]{1,4}[\"']?[A-Za-z0-9/+]{40}[\"']?")),
+    ("bearer_token",     "warn",     "Authorization: Bearer <token>", re.compile(r"(?i)authorization\s*:\s*bearer\s+[A-Za-z0-9_\-\.=]{20,}")),
 ]
 
 # Generic "<secret-ish name> = '<value>'" with an entropy gate (catches custom secrets).

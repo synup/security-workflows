@@ -25,6 +25,15 @@ BLOCK = [
     ("aws_creds",     "critical", "AWS credentials file",                      ["credentials", "aws_credentials"]),
     ("kube",          "high",     "Kubeconfig (cluster credentials)",          ["kubeconfig", "*.kubeconfig"]),
     ("pkcs8",         "critical", "DER/keystore",                              ["*.der"]),
+    ("ovpn",          "high",     "OpenVPN profile (may embed keys)",          ["*.ovpn"]),
+    ("keepass",       "high",     "KeePass database",                          ["*.kdbx"]),
+    ("pgp_secret",    "critical", "PGP/GPG secret keyring",                    ["secring.*", "*.gpg", "*.asc"]),
+    ("tfstate",       "high",     "Terraform state (often contains secrets)",  ["*.tfstate", "*.tfstate.backup"]),
+    ("docker_cfg",    "high",     "Docker registry credentials",               [".dockercfg", "config.json"]),
+    ("git_creds",     "critical", "Stored git credentials",                    [".git-credentials"]),
+    ("wp_config",     "high",     "WordPress config (DB creds)",               ["wp-config.php"]),
+    ("rails_secrets", "high",     "Rails secrets/master key",                  ["master.key", "secrets.yml"]),
+    ("history",       "high",     "Shell history (may contain secrets)",       [".bash_history", ".zsh_history", ".mysql_history", ".psql_history"]),
 ]
 
 # Filenames that look sensitive but are safe to commit.
