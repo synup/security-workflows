@@ -30,6 +30,10 @@ RULES = [
         re.compile(r"\byaml\.load\s*\((?![^)]*Safe)")),
     ("ruby_yaml_load", "warn", "YAML.load (use YAML.safe_load)",
         re.compile(r"\bYAML\.load(?!_file|_stream|_documents|s)\b")),
+    ("ruby_send_user", "warn", "send() with user-controlled method name",
+        re.compile(r"\.send\s*\(\s*(?:params|args|request|input)\b")),
+    ("ruby_kernel_exec", "warn", "Kernel.exec/system or backtick with interpolation",
+        re.compile(r"(?:Kernel\.(?:exec|system)|`[^`]*#\{|%x\{[^}]*#\{)")),
     ("js_node_serialize", "high", "node-serialize unserialize (RCE-prone)",
         re.compile(r"\bunserialize\s*\(")),
     # --- dynamic eval ---
