@@ -32,7 +32,7 @@ RULES = [
     ("private_key",      "critical", "Private key block",            re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("jwt",              "warn",     "JSON Web Token",               re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
     ("db_uri_creds",     "high",     "DB connection string with credentials",
-        re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|rediss)://[^:@\s/]+:[^@\s/]+@", re.IGNORECASE)),
+        re.compile(r"\b(?:postgres(?:ql)?|mysql|mariadb|mssql|sqlserver|oracle|mongodb(?:\+srv)?|cassandra|clickhouse|redis|rediss|amqps?)://[^:@\s/]*:[^@\s/]+@", re.IGNORECASE)),
     ("npmrc_token",      "critical", "npm registry auth token",      re.compile(r"//[^\s]+/:_authToken=[A-Za-z0-9_\-\.]+")),
 ]
 
