@@ -41,7 +41,7 @@ RULES = [
         re.compile(r"\b(?:eval|exec)\s*\(\s*(?!['\"]\s*\))")),
     # --- weak crypto / TLS ---
     ("weak_hash", "warn", "Weak hash (MD5/SHA1) — avoid for passwords/signatures",
-        re.compile(r"(?:hashlib\.(?:md5|sha1)|MessageDigest\.getInstance\(\s*[\"'](?:MD5|SHA-1)|createHash\(\s*[\"'](?:md5|sha1))", re.IGNORECASE)),
+        re.compile(r"(?:hashlib\.(?:md5|sha1)|hashes\.(?:MD5|SHA1)\b|Crypto\.Hash\.(?:MD5|SHA1)|\bMD5\.new\s*\(|MessageDigest\.getInstance\(\s*[\"'](?:MD5|SHA-?1)|createHash\(\s*[\"'](?:md5|sha1)|\bEVP_md5\b)", re.IGNORECASE)),
     ("weak_cipher", "warn", "Weak cipher (DES/RC4/ECB)",
         re.compile(r"\b(?:DES|RC4|ARC4)\b|/ECB/", re.IGNORECASE)),
     ("tls_verify_off", "high", "TLS certificate verification disabled",
