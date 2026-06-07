@@ -334,10 +334,54 @@ EOF
 fi
 
 # ------------------------------------------------------------------
+# Convenience CLI: a `synup-scan` command on PATH (wraps the modular scanner)
+# ------------------------------------------------------------------
+BIN_DIR="$SYNUP_HOME_DIR/bin"
+mkdir -p "$BIN_DIR"
+cat > "$BIN_DIR/synup-scan" <<EOF
+#!/usr/bin/env bash
+# Synup scanner convenience wrapper. Examples:
+#   synup-scan --list-rules     # browse every check + rule
+#   synup-scan --init           # write a .synup-scan.json starter into this repo
+#   synup-scan .                # scan the current repo
+exec python3 "$INSTALL_DIR/scripts/scan/runner.py" "\$@"
+EOF
+chmod +x "$BIN_DIR/synup-scan"
+
+# (1) Symlink into a dir ALREADY on PATH → usable immediately, no `source` needed.
+#     (A child process can't change the parent shell's PATH; a symlink in an
+#      existing PATH dir sidesteps that.)
+linked=""
+for d in "$HOME/.local/bin" /usr/local/bin /opt/homebrew/bin; do
+  case ":$PATH:" in *":$d:"*) ;; *) continue ;; esac      # only dirs already on PATH
+  [ -d "$d" ] && [ -w "$d" ] || continue
+  ln -sf "$BIN_DIR/synup-scan" "$d/synup-scan" 2>/dev/null && { linked="$d"; break; }
+done
+
+# (2) Durable fallback for future shells: add ~/.synup/bin to PATH in rc files.
+PATH_BLOCK="# >>> synup-scan >>>
+export PATH=\"$BIN_DIR:\$PATH\"
+# <<< synup-scan <<<"
+for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  [ -e "$rc" ] || continue
+  grep -qF ">>> synup-scan >>>" "$rc" 2>/dev/null || printf '\n%s\n' "$PATH_BLOCK" >> "$rc"
+done
+
+if [ -n "$linked" ]; then
+  ok "installed 'synup-scan' → $linked/synup-scan  (ready to use now)"
+else
+  ok "installed 'synup-scan' → $BIN_DIR/synup-scan"
+fi
+
+# ------------------------------------------------------------------
 step "4/4  Done"
 # ------------------------------------------------------------------
 ok "Synup security hooks installed."
+info "Browse checks: ${CYA}synup-scan --list-rules${RST}     Configure a repo: ${CYA}synup-scan --init${RST}"
+if [ -z "$linked" ]; then
+  info "'synup-scan' is on PATH for ${BLD}new${RST} shells. For ${BLD}this${RST} one: ${CYA}source ~/.zshrc${RST}"
+  info "  (an installer can't change the PATH of the shell that launched it — that's an OS limit)"
+fi
 info "Test it:    cd <any-repo> && echo 'AKIA1234567890ABCDEF' > t.txt && git add t.txt && git commit -m test"
 info "            (the commit should be blocked; then: rm t.txt)"
-info "Verify sig: git log --show-signature -1"
 info "Update later: re-run this installer (it pulls the latest scanner + hooks)."

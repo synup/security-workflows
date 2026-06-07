@@ -84,7 +84,7 @@ Re-run the installer any time to pull the latest scanner rules and hooks:
 
 ### `hooks/pre-commit`
 Materializes the **staged** content of your commit into a temp dir and runs
-`scripts/scan_malware.py --min-severity high`. Any high/critical finding blocks the
+`scripts/scan/runner.py --min-severity high`. Any high/critical finding blocks the
 commit.
 
 Escape hatches (use rarely):
@@ -106,27 +106,75 @@ SYNUP_HOOK_UPDATE_INTERVAL=0    git commit   # disable auto-update for this comm
 SYNUP_HOOK_NO_UPDATE=1          git commit   # same: skip the update check
 ```
 
-### `scripts/scan_malware.py`
-Standalone scanner. Detects reverse shells, crypto miners, obfuscated payloads,
-web shells, hardcoded credentials (AWS/GitHub/Slack tokens, private keys), and
-supply-chain markers. Run it manually any time:
+### `scripts/scan/` — modular scanner
+The scanner is split into one file per check under `scripts/scan/checks/`, so checks
+can be toggled and extended independently:
 
+| Check | File | Detects |
+|-------|------|---------|
+| `secrets` | `checks/secrets.py` | AWS/GCP/GitHub/Slack/Stripe/Twilio/SendGrid/npm/PyPI/OpenAI/Anthropic tokens, private keys, DB URIs with creds, JWTs, generic high-entropy `KEY=…` |
+| `sensitive_files` | `checks/sensitive_files.py` | committing `.env`, `*.pem`, `id_rsa`, `*.p12`, `.npmrc`, GCP SA json, etc. (`.env.example`/`*.pub` allowed) |
+| `malware` | `checks/malware.py` | reverse shells, crypto miners, web shells, obfuscation, supply-chain markers, hidden payloads |
+| `dangerous_code` | `checks/dangerous_code.py` | command/SQL injection, unsafe deserialization (`pickle`/`yaml.load`), `eval`, weak crypto, TLS verification off |
+
+Run it manually any time:
 ```bash
-python3 ~/.synup/security-workflows/scripts/scan_malware.py .            # scan a repo
-python3 ~/.synup/security-workflows/scripts/scan_malware.py file.js --json
+python3 ~/.synup/security-workflows/scripts/scan/runner.py .                  # scan a repo
+python3 ~/.synup/security-workflows/scripts/scan/runner.py file.js --json
+python3 ~/.synup/security-workflows/scripts/scan/runner.py . --disable dangerous_code
+python3 ~/.synup/security-workflows/scripts/scan/runner.py --list-checks
 ```
+(`scripts/scan_malware.py` is the original self-contained scanner, kept unchanged so
+the existing CI workflow keeps working as-is — see below.)
 
-### `.github/workflows/malware-scan.yml`
-Reusable CI workflow. Add it to any repo with a thin caller:
+#### Configuring which scans run — `.synup-scan.json`
+Each repo controls its own scans with a **`.synup-scan.json` at its root** (committed to the
+repo, shared with the team). It is **never overwritten** by the hook's auto-update — that only
+refreshes `~/.synup`, not your project repos.
 
+**You don't need to read any code to know what's available.** Discover everything from the CLI:
+```bash
+S=~/.synup/security-workflows/scripts/scan/runner.py
+python3 "$S" --list-checks    # the 4 check names
+python3 "$S" --list-rules     # EVERY check + rule: id, severity, and whether it BLOCKS
+python3 "$S" --init           # write a starter .synup-scan.json (with the full option list inside)
+```
+`--list-rules` prints the full menu; `--init` drops a ready-to-edit `.synup-scan.json` whose
+`_available` block lists every check + rule id you can put under `disable` / `disable_rules`.
+(`.synup-scan.example.json` is the same, committed for reference.)
+
+Then edit it — turn off a whole check, a single rule, or skip paths:
+```json
+{
+  "disable": ["dangerous_code"],
+  "allow": ["test/fixtures/*", "docs/*"],
+  "secrets": { "disable_rules": ["jwt", "stripe_pub"] },
+  "min_severity": "high"
+}
+```
+Or suppress one line inline with a `synup-ignore` comment.
+
+### Fully offline — no dependencies
+The scanner is **pure Python standard library** — nothing to `pip install`, no binaries,
+no network at scan time. A commit check runs entirely locally in milliseconds. (The only
+network use is the hook's optional **background** daily `git pull` to refresh rules, which
+never blocks a commit and can be disabled with `SYNUP_HOOK_UPDATE_INTERVAL=0`.)
+
+### Existing CI — `.github/workflows/malware-scan.yml` (unchanged)
+The pre-existing reusable CI workflow is **left exactly as-is** — it runs the original
+self-contained `scan_malware.py` on changed PR files (no external tools) and comments +
+blocks on high/critical findings. Consumers keep calling it unchanged:
 ```yaml
 # .github/workflows/security.yml in the consuming repo
 name: Security
 on: pull_request
 jobs:
-  malware-scan:
+  malware:
     uses: synup/security-workflows/.github/workflows/malware-scan.yml@master
 ```
+> Note: the **local hook** uses the newer modular scanner (`scripts/scan/`), which has
+> broader coverage (secrets, sensitive-files, dangerous-code) than the CI's legacy
+> `scan_malware.py`. Migrating CI to the modular scanner is a deliberate, separate step.
 
 ---
 

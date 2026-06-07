@@ -2,8 +2,10 @@
 #
 # Synup org pre-commit hook
 # ------------------------------------------------------------------
-# 1. Runs scan_malware.py against the *staged* content of this commit
-#    and blocks the commit on any high/critical finding.
+# 1. Runs the modular scanner (scripts/scan/runner.py — secrets, sensitive_files,
+#    malware, dangerous_code) against the *staged* content of this commit and
+#    blocks the commit on any high/critical finding. Self-contained: it does NOT
+#    depend on the legacy scan_malware.py (that's only used by the CI workflow).
 # 2. Chains to any repo-local hooks (.git/hooks/pre-commit, .husky/pre-commit)
 #    so existing project hooks keep working under a global core.hooksPath.
 #
@@ -23,7 +25,7 @@ set -uo pipefail
 export SYNUP_PRECOMMIT_ACTIVE=1
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCANNER="$HOOK_DIR/../scripts/scan_malware.py"
+SCANNER="$HOOK_DIR/../scripts/scan/runner.py"   # modular scanner (secrets/sensitive_files/malware/dangerous_code)
 INSTALL_DIR="$(cd "$HOOK_DIR/.." && pwd)"
 UPDATE_STAMP="$(dirname "$INSTALL_DIR")/.synup_hook_last_update"
 UPDATE_INTERVAL="${SYNUP_HOOK_UPDATE_INTERVAL:-86400}"   # seconds between update checks; 0 disables
@@ -100,7 +102,10 @@ run_scan() {
   log "Fix the findings above, then ${BLD}re-stage the file(s)${RST} before committing again — the scan"
   log "checks ${BLD}staged${RST} content, so a fix you haven't \`git add\`ed yet won't clear the block:"
   log "    ${YEL}git add <file>  &&  git commit ...${RST}     (or use ${YEL}git commit -a${RST}, which re-stages tracked files)"
-  log "False positive? Bypass with ${YEL}SYNUP_SKIP_MALWARE_SCAN=1 git commit ...${RST} and please report it."
+  log ""
+  log "See every check & rule:   ${YEL}synup-scan --list-rules${RST}"
+  log "Turn a check/rule off:    ${YEL}synup-scan --init${RST}  → edit .synup-scan.json (commit it)"
+  log "False positive this once? ${YEL}SYNUP_SKIP_MALWARE_SCAN=1 git commit ...${RST}  (please report it)"
   return 1
 }
 

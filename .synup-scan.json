@@ -1,0 +1,11 @@
+{
+  "_comment": "This repo defines detection patterns and documents test examples, so its own rule/doc files would self-trigger. Allowlist them.",
+  "allow": [
+    "README.md",
+    "install.sh",
+    "uninstall.sh",
+    ".synup-scan.example.json",
+    "scripts/scan/checks/*",
+    "scripts/scan_malware.py"
+  ]
+}
