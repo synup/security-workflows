@@ -348,23 +348,40 @@ exec python3 "$INSTALL_DIR/scripts/scan/runner.py" "\$@"
 EOF
 chmod +x "$BIN_DIR/synup-scan"
 
-# Put it on PATH for interactive shells (idempotent, marker-delimited).
+# (1) Symlink into a dir ALREADY on PATH → usable immediately, no `source` needed.
+#     (A child process can't change the parent shell's PATH; a symlink in an
+#      existing PATH dir sidesteps that.)
+linked=""
+for d in "$HOME/.local/bin" /usr/local/bin /opt/homebrew/bin; do
+  case ":$PATH:" in *":$d:"*) ;; *) continue ;; esac      # only dirs already on PATH
+  [ -d "$d" ] && [ -w "$d" ] || continue
+  ln -sf "$BIN_DIR/synup-scan" "$d/synup-scan" 2>/dev/null && { linked="$d"; break; }
+done
+
+# (2) Durable fallback for future shells: add ~/.synup/bin to PATH in rc files.
 PATH_BLOCK="# >>> synup-scan >>>
 export PATH=\"$BIN_DIR:\$PATH\"
 # <<< synup-scan <<<"
-added_path=0
 for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
   [ -e "$rc" ] || continue
-  grep -qF ">>> synup-scan >>>" "$rc" 2>/dev/null || { printf '\n%s\n' "$PATH_BLOCK" >> "$rc"; added_path=1; }
+  grep -qF ">>> synup-scan >>>" "$rc" 2>/dev/null || printf '\n%s\n' "$PATH_BLOCK" >> "$rc"
 done
-ok "installed the 'synup-scan' command → $BIN_DIR/synup-scan"
+
+if [ -n "$linked" ]; then
+  ok "installed 'synup-scan' → $linked/synup-scan  (ready to use now)"
+else
+  ok "installed 'synup-scan' → $BIN_DIR/synup-scan"
+fi
 
 # ------------------------------------------------------------------
 step "4/4  Done"
 # ------------------------------------------------------------------
 ok "Synup security hooks installed."
 info "Browse checks: ${CYA}synup-scan --list-rules${RST}     Configure a repo: ${CYA}synup-scan --init${RST}"
-[ "$added_path" = 1 ] && info "(open a new terminal, or run: ${CYA}source ~/.zshrc${RST} — to use 'synup-scan' now)"
+if [ -z "$linked" ]; then
+  info "'synup-scan' is on PATH for ${BLD}new${RST} shells. For ${BLD}this${RST} one: ${CYA}source ~/.zshrc${RST}"
+  info "  (an installer can't change the PATH of the shell that launched it — that's an OS limit)"
+fi
 info "Test it:    cd <any-repo> && echo 'AKIA1234567890ABCDEF' > t.txt && git add t.txt && git commit -m test"
 info "            (the commit should be blocked; then: rm t.txt)"
 info "Update later: re-run this installer (it pulls the latest scanner + hooks)."
