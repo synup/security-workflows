@@ -7,21 +7,24 @@
 #   2. Points git's global core.hooksPath at the org pre-commit hook
 #      (malware/secret scan on every commit, all current + future repos)
 #   3. Sets up SSH-based commit signing and registers the key on GitHub
-#   4. Auto-detects EVERY husky repo under $HOME and wires the scan into each
-#      (husky overrides the global hook, so it needs per-repo wiring)
+#   4. Scans the chosen directory for ALL repos under it and wires the scan
+#      into every husky repo found (husky overrides the global hook, so it
+#      needs per-repo wiring). Husky wiring is ON by default.
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/synup/security-workflows/master/install.sh | bash
 #   # or, from a clone:  ./install.sh [options]
 #
+# Husky discovery scans the directory the installer runs in (your $PWD), or the
+# directory given with --root, recursively. Run it from (or point --root at) the
+# folder that holds your repos.
+#
 # Options:
-#   --root DIR              Limit husky auto-discovery to DIR
-#                           (default: auto-scan ALL husky repos under $HOME)
+#   --root DIR              Directory to scan for husky repos, recursively
+#                           (default: the current directory)
 #   --no-signing            Skip SSH commit-signing setup
 #   --no-hooks              Skip git hook setup
-#   --no-husky              Don't auto-wire husky repos (husky wiring is ON by default)
-#   --inject-husky [DIR]    Wire husky repos now; with DIR, wire just that one
-#                           repo (e.g. one cloned after the initial install)
+#   --no-husky              Don't set up husky repos (husky wiring is ON by default)
 #   --reconfigure-signing   Re-run signing setup even if already configured
 #                           (e.g. to switch an existing key to Secretive)
 #   --signing-method M      secretive | passphrase  (skip the prompt; pick M)
@@ -39,12 +42,10 @@ INSTALL_DIR="$SYNUP_HOME_DIR/security-workflows"
 HOOKS_DIR="$INSTALL_DIR/hooks"
 ALLOWED_SIGNERS="$SYNUP_HOME_DIR/allowed_signers"
 
-ROOT_DIR="$PWD"
-ROOT_SET=0              # did the user pass --root? if not, husky discovery scans all of $HOME
+ROOT_DIR="$PWD"        # directory scanned for husky repos; override with --root
 DO_SIGNING=1
 DO_HOOKS=1
-INJECT_HUSKY=1          # husky repos are wired automatically by default; --no-husky opts out
-HUSKY_REPO=""           # --inject-husky DIR targets one specific repo (e.g. one cloned after install)
+DO_HUSKY=1             # husky repos under ROOT_DIR are wired automatically; --no-husky opts out
 RECONFIGURE_SIGNING=0
 SIGNING_METHOD="${SYNUP_SIGNING_METHOD:-}"   # secretive | passphrase | "" (prompt/auto)
 
@@ -57,16 +58,13 @@ step()  { printf "\n%b\n" "${BLD}$*${RST}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)                 ROOT_DIR="$2"; ROOT_SET=1; shift 2 ;;
+    --root)                 ROOT_DIR="$2"; shift 2 ;;
     --no-signing)           DO_SIGNING=0; shift ;;
     --no-hooks)             DO_HOOKS=0; shift ;;
-    --no-husky)             INJECT_HUSKY=0; shift ;;
-    --inject-husky)         # optional DIR arg → wire just that repo (e.g. one added after install)
-                            INJECT_HUSKY=1
-                            if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then HUSKY_REPO="$2"; shift 2; else shift; fi ;;
+    --no-husky)             DO_HUSKY=0; shift ;;
     --reconfigure-signing)  RECONFIGURE_SIGNING=1; shift ;;
     --signing-method)       SIGNING_METHOD="$2"; shift 2 ;;
-    -h|--help)              sed -n '2,34p' "$0"; exit 0 ;;
+    -h|--help)              sed -n '2,32p' "$0"; exit 0 ;;
     *)               err "unknown option: $1"; exit 2 ;;
   esac
 done
@@ -109,10 +107,11 @@ step "2/4  Wiring global git hooks (core.hooksPath)"
 fi
 
 # --- husky repos set a local core.hooksPath that overrides the global hook ---
-# By DEFAULT we auto-wire every husky repo found under --root (husky bypasses the
-# global hook otherwise). --no-husky skips this; --inject-husky DIR targets just
-# one repo (handy for a repo cloned AFTER the initial install).
-if [ "$DO_HOOKS" = 1 ] || [ "$INJECT_HUSKY" = 1 ]; then
+# By DEFAULT we scan ROOT_DIR (the dir the installer runs in, or --root) for
+# every repo under it and wire the scan into each husky one (husky bypasses the
+# global hook otherwise). --no-husky turns this off entirely.
+[ "$DO_HUSKY" = 1 ] || info "husky setup skipped (--no-husky)"
+if [ "$DO_HUSKY" = 1 ]; then
   MARK_START="# >>> synup malware scan >>>"
   MARK_END="# <<< synup malware scan <<<"
   # pre-commit: BLOCKING — runs first, before lint-staged/npm hooks.
@@ -151,50 +150,32 @@ $MARK_END"
   }
   inject_husky() { inject_block "$1" "$PRECOMMIT_SNIPPET"; }   # pre-commit (blocking)
 
-  is_husky_repo() { [ -d "$1/.husky" ] || [ -n "$(git -C "$1" config --local core.hooksPath 2>/dev/null || true)" ]; }
-
+  # Scan ROOT_DIR recursively for every repo, then wire each husky one. We locate
+  # .husky directories directly rather than relying on husky having set
+  # core.hooksPath (a freshly-cloned repo won't until `npm install` runs).
   husky_repos=()
-  search_roots=("$ROOT_DIR")
-  if [ -n "$HUSKY_REPO" ]; then
-    step "Wiring husky repo: $HUSKY_REPO"
-    if is_husky_repo "$HUSKY_REPO"; then
-      husky_repos+=("$(git -C "$HUSKY_REPO" rev-parse --show-toplevel 2>/dev/null || echo "$HUSKY_REPO")")
-    else
-      warn "'$HUSKY_REPO' isn't a husky repo (no .husky/ or local core.hooksPath) — the global hook already covers it"
-    fi
-  else
-    # Auto-discover EVERY husky project. With no --root we scan the whole home
-    # dir, so no path needs to be given; --root narrows the search. We locate
-    # .husky directories directly rather than relying on husky having set
-    # core.hooksPath (a freshly-cloned repo won't until `npm install` runs).
-    [ "$ROOT_SET" = 1 ] || search_roots=("$HOME")
-    step "Auto-discovering husky repos under ${search_roots[*]}  (this can take a few seconds)"
-    while IFS= read -r top; do
-      [ -n "$top" ] && husky_repos+=("$top")
-    done < <(
-      find "${search_roots[@]}" -maxdepth 8 \
-        \( -name node_modules -o -name .git -o -name Library -o -name .Trash \
-           -o -name .cache -o -name .npm -o -name Applications \) -prune \
-        -o -type d -name .husky -prune -print 2>/dev/null \
-      | while IFS= read -r hk; do
-          repo="$(dirname "$hk")"
-          git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
-          git -C "$repo" rev-parse --show-toplevel 2>/dev/null
-        done | sort -u
-    )
-  fi
+  step "Scanning $ROOT_DIR for husky repos (recursive — this can take a few seconds)"
+  while IFS= read -r top; do
+    [ -n "$top" ] && husky_repos+=("$top")
+  done < <(
+    find "$ROOT_DIR" -maxdepth 8 \
+      \( -name node_modules -o -name .git -o -name Library -o -name .Trash \
+         -o -name .cache -o -name .npm -o -name Applications \) -prune \
+      -o -type d -name .husky -prune -print 2>/dev/null \
+    | while IFS= read -r hk; do
+        repo="$(dirname "$hk")"
+        git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
+        git -C "$repo" rev-parse --show-toplevel 2>/dev/null
+      done | sort -u
+  )
 
   if [ ${#husky_repos[@]} -eq 0 ]; then
-    [ -z "$HUSKY_REPO" ] && ok "no husky repos found under ${search_roots[*]}"
+    ok "no husky repos found under $ROOT_DIR"
   else
-    [ -z "$HUSKY_REPO" ] && info "found ${#husky_repos[@]} husky repo(s)"
+    info "found ${#husky_repos[@]} husky repo(s) under $ROOT_DIR"
     changed_any=0
     for repo in "${husky_repos[@]}"; do
       rel="${repo/#$HOME/~}"
-      if [ "$INJECT_HUSKY" != 1 ]; then
-        warn "husky repo not wired (--no-husky): $rel"
-        continue
-      fi
       # 1) pre-commit (blocking)
       if inject_husky "$repo/.husky/pre-commit"; then
         ok "wired scan-first at TOP of $rel/.husky/pre-commit"; changed_any=1

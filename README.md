@@ -77,10 +77,14 @@ Re-run the installer any time to pull the latest scanner rules and hooks:
 
 | Flag | Effect |
 |------|--------|
-| `--root DIR` | Where to look for husky repos (default: current dir) |
+| `--root DIR` | Directory scanned for husky repos, recursively (default: current dir) |
 | `--no-signing` | Skip commit-signing setup |
 | `--no-hooks` | Skip git hook setup |
-| `--inject-husky` | Auto-add the scan to husky repos' `.husky/pre-commit` |
+| `--no-husky` | Don't set up husky repos (husky wiring is **on** by default) |
+
+By default the installer scans the directory it's run in (or `--root DIR`) for **every** repo
+under it and wires the scan into each husky one — no per-repo path needed. Run it from, or point
+`--root` at, the folder that holds your repos. Use `--no-husky` to skip husky setup entirely.
 
 ### Git hooks
 | Hook | When | Scope | Blocks? | Skip just this one |
@@ -198,7 +202,7 @@ jobs:
 Husky sets a **local** `core.hooksPath` (e.g. `.husky/_`) that overrides the global
 one, so the global hooks are bypassed there. Husky's `_/` wrappers exist for every
 git hook but only run a `.husky/<hook>` file if one exists — so the installer (by
-default, or with `--inject-husky`) creates them, delegating to our global hooks so a
+default; disable with `--no-husky`) creates them, delegating to our global hooks so a
 husky repo gets the **same** coverage as everywhere else:
 
 | `.husky/<hook>` | Delegates to | Behavior |
@@ -228,7 +232,7 @@ The post-* files are created if absent and just forward git's args:
 # <<< synup malware scan <<<
 ```
 
-All run ours first. Re-running `--inject-husky` is idempotent and will reposition an
+All run ours first. Re-running the installer is idempotent and will reposition an
 older bottom-injected block to the top. **Commit the changed `.husky/*` files** so
 teammates get the same scans (post-* hooks live in the repo, unlike the global ones).
 The same per-event skip flags apply (`SYNUP_SCAN_CHECKOUT=0`, etc.).
