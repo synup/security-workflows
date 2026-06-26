@@ -196,10 +196,19 @@ jobs:
 ## Husky / JS repos
 
 Husky sets a **local** `core.hooksPath` (e.g. `.husky/_`) that overrides the global
-one, so the global hook is bypassed there. The installer detects these and either
-warns you or, with `--inject-husky`, inserts this block at the **top** of
-`.husky/pre-commit` — so the malware scan **runs first** and blocks the commit before
-husky's own hooks (lint-staged, etc.) run (commit the change so teammates get it):
+one, so the global hooks are bypassed there. Husky's `_/` wrappers exist for every
+git hook but only run a `.husky/<hook>` file if one exists — so the installer (by
+default, or with `--inject-husky`) creates them, delegating to our global hooks so a
+husky repo gets the **same** coverage as everywhere else:
+
+| `.husky/<hook>` | Delegates to | Behavior |
+|-----------------|--------------|----------|
+| `pre-commit` | `hooks/pre-commit` | **blocking** — injected at the **top** so the scan runs before lint-staged/npm hooks |
+| `post-merge` | `hooks/post-merge` | informational full-project scan |
+| `post-rewrite` | `hooks/post-rewrite` | informational full-project scan |
+| `post-checkout` | `hooks/post-checkout` | informational (clone + branch switch) |
+
+`pre-commit` keeps any existing content (scan runs first, then your hooks):
 
 ```sh
 #!/usr/bin/env sh
@@ -210,8 +219,19 @@ husky's own hooks (lint-staged, etc.) run (commit the change so teammates get it
 npx lint-staged
 ```
 
-Both run, ours first. Re-running `--inject-husky` is idempotent and will reposition an
-older bottom-injected block to the top.
+The post-* files are created if absent and just forward git's args:
+
+```sh
+#!/usr/bin/env sh
+# >>> synup malware scan >>>
+"$HOME/.synup/security-workflows/hooks/post-checkout" "$@"   # informational (non-blocking)
+# <<< synup malware scan <<<
+```
+
+All run ours first. Re-running `--inject-husky` is idempotent and will reposition an
+older bottom-injected block to the top. **Commit the changed `.husky/*` files** so
+teammates get the same scans (post-* hooks live in the repo, unlike the global ones).
+The same per-event skip flags apply (`SYNUP_SCAN_CHECKOUT=0`, etc.).
 
 ---
 
