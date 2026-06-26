@@ -7,6 +7,7 @@
     ".synup-scan.example.json",
     "scripts/scan/checks/*",
     "scripts/scan_malware.py",
-    "hooks/*"
+    "hooks/*",
+    "tests/*"
   ]
 }
