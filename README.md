@@ -82,10 +82,20 @@ Re-run the installer any time to pull the latest scanner rules and hooks:
 | `--no-hooks` | Skip git hook setup |
 | `--inject-husky` | Auto-add the scan to husky repos' `.husky/pre-commit` |
 
-### `hooks/pre-commit`
-Materializes the **staged** content of your commit into a temp dir and runs
-`scripts/scan/runner.py --min-severity high`. Any high/critical finding blocks the
-commit.
+### Git hooks
+| Hook | When | Scope | Blocks? |
+|------|------|-------|---------|
+| `pre-commit` | every `git commit` | **staged** content | ✅ yes — high/critical block the commit |
+| `post-merge` | after `git merge` / `git pull` | **whole project** | ⚠️ no — runs after the merge; alerts on incoming malware |
+| `post-rewrite` | after `git rebase` | **whole project** | ⚠️ no — informational |
+| `post-checkout` | after a fresh `git clone` only | **whole project** | ⚠️ no — informational |
+
+The `pre-commit` hook materializes the **staged** content into a temp dir and runs
+`scripts/scan/runner.py --min-severity high` — any high/critical finding **blocks** the commit.
+
+The `post-*` hooks run a **full-project** scan (with a live `--progress` counter) *after* the
+operation, so they can't block it — they're alerts for when malware/secrets arrive via a
+pull/merge/rebase/clone. Disable them with `SYNUP_SCAN_POST=0`.
 
 Escape hatches (use rarely):
 ```bash

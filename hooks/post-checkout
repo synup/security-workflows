@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs after checkout/clone. Scan only on a fresh CLONE (prev HEAD = null SHA),
+# not on every branch switch. $1 = prev, $2 = new, $3 = flag.
+[ "${1:-}" = "0000000000000000000000000000000000000000" ] || exit 0
+exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" clone

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Shared informational full-project scan, invoked by post-merge / post-rewrite /
+# post-checkout. These run AFTER the operation, so they can't block it — they
+# alert you when malware/secrets just arrived via a pull/merge/rebase/clone.
+# Disable with SYNUP_SCAN_POST=0 (or SYNUP_SKIP_MALWARE_SCAN=1).
+set -uo pipefail
+event="${1:-change}"
+[ "${SYNUP_SKIP_MALWARE_SCAN:-}" = "1" ] && exit 0
+[ "${SYNUP_SCAN_POST:-1}" = "0" ] && exit 0
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCANNER="$HOOK_DIR/../scripts/scan/runner.py"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+command -v python3 >/dev/null 2>&1 || exit 0
+[ -f "$SCANNER" ] || exit 0
+RED='\033[0;31m'; YEL='\033[1;33m'; RST='\033[0m'
+printf "%b\n" "${YEL}[synup] post-${event}: scanning the whole project for malware/secrets…${RST}" >&2
+if ! python3 "$SCANNER" "$REPO_ROOT" --min-severity high --progress >&2; then
+  printf "%b\n" "${RED}[synup] ⚠ high/critical findings are now in your working tree (introduced by this ${event}). Review above — informational only; the ${event} already completed.${RST}" >&2
+fi
+exit 0

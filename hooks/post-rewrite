@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs after `git rebase` (and `commit --amend`). Scan after a rebase; skip amend
+# (the pre-commit hook already scanned that commit). $1 = rebase|amend.
+[ "${1:-}" = "amend" ] && exit 0
+exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" rebase

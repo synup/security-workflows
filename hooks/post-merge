@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Runs after `git merge` / `git pull` → full-project scan.
+exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" merge

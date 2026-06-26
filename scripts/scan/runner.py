@@ -36,9 +36,11 @@ def _allowed(rel: str, globs) -> bool:
     return any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(rel, g.rstrip("/") + "/*") for g in globs)
 
 
-def scan(root: Path, cfg: Config, disabled_checks: set[str]) -> list[Finding]:
+def scan(root: Path, cfg: Config, disabled_checks: set[str], progress: bool = False):
     enabled = [m for m in ALL if m.NAME not in disabled_checks]
     findings: list[Finding] = []
+    nfiles = 0
+    live = progress and sys.stderr.isatty()
     for path in iter_files(root):
         rel = relpath(path, root)
         if _allowed(rel, cfg.allow):
@@ -47,6 +49,13 @@ def scan(root: Path, cfg: Config, disabled_checks: set[str]) -> list[Finding]:
             text = path.read_bytes().decode("utf-8", errors="replace")
         except OSError:
             continue
+        nfiles += 1
+        if progress:
+            if live:
+                sys.stderr.write(f"\r\033[K  {CYA}scanning…{RST} {nfiles} files  {_trunc(rel, 48)}")
+                sys.stderr.flush()
+            elif nfiles % 250 == 0:                       # non-tty (CI/log): periodic line
+                sys.stderr.write(f"  scanning… {nfiles} files\n"); sys.stderr.flush()
         lines = text.splitlines()
         for mod in enabled:
             try:
@@ -57,7 +66,9 @@ def scan(root: Path, cfg: Config, disabled_checks: set[str]) -> list[Finding]:
                 if f.line and 0 < f.line <= len(lines) and INLINE_IGNORE.search(lines[f.line - 1]):
                     continue  # inline-suppressed
                 findings.append(f)
-    return findings
+    if live:
+        sys.stderr.write(f"\r\033[K  {GRN}scanned {nfiles} files{RST}\n"); sys.stderr.flush()
+    return findings, nfiles
 
 
 SEV_COLOR = {"critical": RED, "high": RED, "warn": YEL, "info": CYA}
@@ -69,7 +80,7 @@ def _trunc(s, n):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def report_text(findings, path_str, checks_str, out=sys.stdout):
+def report_text(findings, path_str, checks_str, files_scanned=0, out=sys.stdout):
     bar = "─" * 78
     n = {s: sum(1 for f in findings if f.severity == s) for s in SEVERITY_ORDER}
     nfiles = len({f.file for f in findings})
@@ -78,12 +89,12 @@ def report_text(findings, path_str, checks_str, out=sys.stdout):
     # ---- header banner ----
     print(f"\n{BLD}┌{bar}┐{RST}", file=out)
     if not findings:
-        print(f"{BLD}│{RST}  {GRN}✓ CLEAN{RST} — no findings", file=out)
+        print(f"{BLD}│{RST}  {GRN}✓ CLEAN{RST} — no findings  ({files_scanned} files scanned)", file=out)
         print(f"{BLD}└{bar}┘{RST}", file=out)
         return
     verdict = f"{RED}✗ BLOCKED{RST}" if blocked else f"{YEL}⚠ WARNINGS ONLY{RST}"
     summary = (f"{RED}{n['critical']} critical{RST} · {RED}{n['high']} high{RST} · "
-               f"{YEL}{n['warn']} warn{RST} · {n['info']} info   across {nfiles} file(s)")
+               f"{YEL}{n['warn']} warn{RST} · {n['info']} info   in {nfiles} of {files_scanned} files")
     print(f"{BLD}│{RST}  Synup Code Scan   {verdict}", file=out)
     print(f"{BLD}│{RST}  {summary}", file=out)
     print(f"{BLD}└{bar}┘{RST}", file=out)
@@ -132,6 +143,7 @@ def main() -> int:
     ap.add_argument("--report", metavar="FILE")
     ap.add_argument("--config", metavar="FILE", help="path to .synup-scan.json (default: ./.synup-scan.json)")
     ap.add_argument("--disable", default="", help="comma-separated checks to skip")
+    ap.add_argument("--progress", action="store_true", help="show a live file-by-file progress counter")
     ap.add_argument("--list-checks", action="store_true", help="list check names")
     ap.add_argument("--list-rules", action="store_true",
                     help="list every check + rule (id, severity, blocks?) — the menu for .synup-scan.json")
@@ -193,7 +205,8 @@ def main() -> int:
 
     min_sev = args.min_severity or cfg.min_severity or "warn"
 
-    findings = [f for f in scan(root, cfg, disabled_checks) if sev_ge(f.severity, min_sev)]
+    all_findings, files_scanned = scan(root, cfg, disabled_checks, progress=args.progress)
+    findings = [f for f in all_findings if sev_ge(f.severity, min_sev)]
 
     path_str = str(root)
     checks_str = ", ".join(m.NAME for m in ALL if m.NAME not in disabled_checks) or "(none)"
@@ -201,13 +214,13 @@ def main() -> int:
     if args.json:
         if args.report:
             with open(args.report, "w") as fh:
-                report_json(findings, -1, fh)
-        report_json(findings, -1)
+                report_json(findings, files_scanned, fh)
+        report_json(findings, files_scanned)
     else:
         if args.report:
             with open(args.report, "w") as fh:
-                report_text(findings, path_str, checks_str, fh)
-        report_text(findings, path_str, checks_str)
+                report_text(findings, path_str, checks_str, files_scanned, fh)
+        report_text(findings, path_str, checks_str, files_scanned)
 
     return 1 if any(sev_ge(f.severity, "high") for f in findings) else 0
 
