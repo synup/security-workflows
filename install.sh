@@ -187,6 +187,8 @@ $MARK_END"
       for hook in $POST_HOOKS; do
         if inject_block "$repo/.husky/$hook" "$(post_snippet "$hook")"; then
           ok "wired $hook → $rel/.husky/$hook"; changed_any=1
+        else
+          ok "already wired: $rel/.husky/$hook"   # idempotent no-op — report it so a re-run isn't mistaken for a failure
         fi
       done
     done
