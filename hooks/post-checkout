@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Runs after `git checkout` / `git clone`. Git passes: $1 = prev HEAD,
+# $2 = new HEAD, $3 = flag (1 = branch checkout/clone, 0 = file checkout).
+#
+# We scan on a fresh CLONE *and* on a branch switch (both have $3 = 1), but skip
+# file checkouts like `git checkout -- path` ($3 = 0), which don't change which
+# code is in the tree as a whole.
+#
+# Skip just this hook with SYNUP_SCAN_CHECKOUT=0 (branch switches are frequent);
+# SYNUP_SCAN_POST=0 disables all post-* scans.
+[ "${3:-}" = "1" ] || exit 0
+dir="$(cd "$(dirname "$0")" && pwd)"
+# null prev SHA = brand-new clone; otherwise it's a branch switch
+if [ "${1:-}" = "0000000000000000000000000000000000000000" ]; then
+  exec "$dir/_scan-project" clone
+else
+  exec "$dir/_scan-project" checkout
+fi

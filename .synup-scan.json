@@ -6,6 +6,7 @@
     "uninstall.sh",
     ".synup-scan.example.json",
     "scripts/scan/checks/*",
-    "scripts/scan_malware.py"
+    "scripts/scan_malware.py",
+    "hooks/*"
   ]
 }
