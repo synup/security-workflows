@@ -2,11 +2,17 @@
 # Shared informational full-project scan, invoked by post-merge / post-rewrite /
 # post-checkout. These run AFTER the operation, so they can't block it — they
 # alert you when malware/secrets just arrived via a pull/merge/rebase/clone.
-# Disable with SYNUP_SCAN_POST=0 (or SYNUP_SKIP_MALWARE_SCAN=1).
+# Disable all of them with SYNUP_SCAN_POST=0 (or SYNUP_SKIP_MALWARE_SCAN=1), or
+# just one event with SYNUP_SCAN_<EVENT>=0 — e.g. SYNUP_SCAN_CHECKOUT=0,
+# SYNUP_SCAN_MERGE=0, SYNUP_SCAN_REBASE=0, SYNUP_SCAN_CLONE=0.
 set -uo pipefail
 event="${1:-change}"
 [ "${SYNUP_SKIP_MALWARE_SCAN:-}" = "1" ] && exit 0
 [ "${SYNUP_SCAN_POST:-1}" = "0" ] && exit 0
+# per-event opt-out: SYNUP_SCAN_<EVENT>=0
+evupper="$(printf '%s' "$event" | tr '[:lower:]' '[:upper:]')"
+evvar="SYNUP_SCAN_${evupper}"
+[ "${!evvar:-1}" = "0" ] && exit 0
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCANNER="$HOOK_DIR/../scripts/scan/runner.py"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
