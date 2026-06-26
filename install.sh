@@ -112,32 +112,41 @@ fi
 if [ "$DO_HOOKS" = 1 ] || [ "$INJECT_HUSKY" = 1 ]; then
   MARK_START="# >>> synup malware scan >>>"
   MARK_END="# <<< synup malware scan <<<"
-  SNIPPET="$MARK_START
+  # pre-commit: BLOCKING — runs first, before lint-staged/npm hooks.
+  PRECOMMIT_SNIPPET="$MARK_START
 \"$HOOKS_DIR/pre-commit\" || exit \$?   # runs FIRST; blocks the commit before husky's hooks
 $MARK_END"
+  # post-* hooks husky doesn't otherwise call. Husky's wrapper only runs a user
+  # hook if .husky/<name> exists, so we create one that delegates to our global
+  # helper. Informational only ("$@" forwards git's args; never blocks).
+  POST_HOOKS="post-merge post-rewrite post-checkout"
+  post_snippet() {  # $1 = hook name
+    printf '%s\n"%s/%s" "$@"   # synup informational full-project scan (non-blocking)\n%s' \
+      "$MARK_START" "$HOOKS_DIR" "$1" "$MARK_END"
+  }
 
-  # Wire our scan at the TOP of .husky/pre-commit so it runs before lint-staged /
-  # npm hooks (which could otherwise exit first and skip the scan). Idempotent &
+  # Wire our snippet at the TOP of a .husky/<hook> file. Idempotent &
   # self-healing: strips any prior block (incl. old bottom-injected ones), re-tops.
-  inject_husky() {
-    local hk="$1"
+  inject_block() {
+    local hk="$1" snip="$2"
     mkdir -p "$(dirname "$hk")"
     if [ ! -f "$hk" ]; then
-      printf '#!/usr/bin/env sh\n%s\n' "$SNIPPET" > "$hk"; chmod +x "$hk"; return 0
+      printf '#!/usr/bin/env sh\n%s\n' "$snip" > "$hk"; chmod +x "$hk"; return 0
     fi
     local t1 t2; t1="$(mktemp)"; t2="$(mktemp)"
     awk -v s="$MARK_START" -v e="$MARK_END" '
       index($0,s){skip=1} skip!=1{print} index($0,e){skip=0}' "$hk" > "$t1"
     if head -1 "$t1" | grep -q '^#!'; then
-      { head -1 "$t1"; printf '%s\n' "$SNIPPET"; tail -n +2 "$t1"; } > "$t2"
+      { head -1 "$t1"; printf '%s\n' "$snip"; tail -n +2 "$t1"; } > "$t2"
     else
-      { printf '%s\n' "$SNIPPET"; cat "$t1"; } > "$t2"
+      { printf '%s\n' "$snip"; cat "$t1"; } > "$t2"
     fi
     # Only touch the file if the result actually differs (block missing or not at
     # top) — an already-correctly-wired hook is left byte-for-byte unchanged.
     if cmp -s "$t2" "$hk"; then rm -f "$t1" "$t2"; return 1; fi
     cat "$t2" > "$hk"; rm -f "$t1" "$t2"; chmod +x "$hk"; return 0
   }
+  inject_husky() { inject_block "$1" "$PRECOMMIT_SNIPPET"; }   # pre-commit (blocking)
 
   is_husky_repo() { [ -d "$1/.husky" ] || [ -n "$(git -C "$1" config --local core.hooksPath 2>/dev/null || true)" ]; }
 
@@ -163,19 +172,25 @@ $MARK_END"
   else
     changed_any=0
     for repo in "${husky_repos[@]}"; do
-      hk="$repo/.husky/pre-commit"
-      if [ "$INJECT_HUSKY" = 1 ]; then
-        if inject_husky "$hk"; then
-          ok "wired scan at TOP of ${repo#"$ROOT_DIR"/}/.husky/pre-commit"
-          changed_any=1
-        else
-          ok "already wired (scan-first): ${repo#"$ROOT_DIR"/}"
-        fi
-      else
-        warn "husky repo not wired (--no-husky): ${repo#"$ROOT_DIR"/}"
+      rel="${repo#"$ROOT_DIR"/}"
+      if [ "$INJECT_HUSKY" != 1 ]; then
+        warn "husky repo not wired (--no-husky): $rel"
+        continue
       fi
+      # 1) pre-commit (blocking)
+      if inject_husky "$repo/.husky/pre-commit"; then
+        ok "wired scan-first at TOP of $rel/.husky/pre-commit"; changed_any=1
+      else
+        ok "already wired (scan-first): $rel/.husky/pre-commit"
+      fi
+      # 2) post-merge / post-rewrite / post-checkout (informational, non-blocking)
+      for hook in $POST_HOOKS; do
+        if inject_block "$repo/.husky/$hook" "$(post_snippet "$hook")"; then
+          ok "wired $hook → $rel/.husky/$hook"; changed_any=1
+        fi
+      done
     done
-    [ "$changed_any" = 1 ] && info "commit the changed .husky/pre-commit file(s) so teammates get scan-first too"
+    [ "$changed_any" = 1 ] && info "commit the changed .husky/* hook file(s) so teammates get the same scans"
   fi
 fi
 
