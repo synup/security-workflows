@@ -7,14 +7,16 @@
 #   2. Points git's global core.hooksPath at the org pre-commit hook
 #      (malware/secret scan on every commit, all current + future repos)
 #   3. Sets up SSH-based commit signing and registers the key on GitHub
-#   4. Flags any husky repos that bypass the global hook
+#   4. Auto-detects EVERY husky repo under $HOME and wires the scan into each
+#      (husky overrides the global hook, so it needs per-repo wiring)
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/synup/security-workflows/master/install.sh | bash
 #   # or, from a clone:  ./install.sh [options]
 #
 # Options:
-#   --root DIR              Directory to scan for husky repos (default: $PWD)
+#   --root DIR              Limit husky auto-discovery to DIR
+#                           (default: auto-scan ALL husky repos under $HOME)
 #   --no-signing            Skip SSH commit-signing setup
 #   --no-hooks              Skip git hook setup
 #   --no-husky              Don't auto-wire husky repos (husky wiring is ON by default)
@@ -38,6 +40,7 @@ HOOKS_DIR="$INSTALL_DIR/hooks"
 ALLOWED_SIGNERS="$SYNUP_HOME_DIR/allowed_signers"
 
 ROOT_DIR="$PWD"
+ROOT_SET=0              # did the user pass --root? if not, husky discovery scans all of $HOME
 DO_SIGNING=1
 DO_HOOKS=1
 INJECT_HUSKY=1          # husky repos are wired automatically by default; --no-husky opts out
@@ -54,7 +57,7 @@ step()  { printf "\n%b\n" "${BLD}$*${RST}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)                 ROOT_DIR="$2"; shift 2 ;;
+    --root)                 ROOT_DIR="$2"; ROOT_SET=1; shift 2 ;;
     --no-signing)           DO_SIGNING=0; shift ;;
     --no-hooks)             DO_HOOKS=0; shift ;;
     --no-husky)             INJECT_HUSKY=0; shift ;;
@@ -151,28 +154,43 @@ $MARK_END"
   is_husky_repo() { [ -d "$1/.husky" ] || [ -n "$(git -C "$1" config --local core.hooksPath 2>/dev/null || true)" ]; }
 
   husky_repos=()
+  search_roots=("$ROOT_DIR")
   if [ -n "$HUSKY_REPO" ]; then
     step "Wiring husky repo: $HUSKY_REPO"
     if is_husky_repo "$HUSKY_REPO"; then
-      husky_repos+=("$HUSKY_REPO")
+      husky_repos+=("$(git -C "$HUSKY_REPO" rev-parse --show-toplevel 2>/dev/null || echo "$HUSKY_REPO")")
     else
       warn "'$HUSKY_REPO' isn't a husky repo (no .husky/ or local core.hooksPath) — the global hook already covers it"
     fi
   else
-    step "Scanning for husky repos under $ROOT_DIR"
-    while IFS= read -r gitdir; do
-      [ -n "$gitdir" ] || continue
-      repo="$(dirname "$gitdir")"                       # works for .git dir OR worktree .git file
-      [ -n "$(git -C "$repo" config --local core.hooksPath 2>/dev/null || true)" ] && husky_repos+=("$repo")
-    done < <(find "$ROOT_DIR" -name node_modules -prune -o -name .git -print 2>/dev/null)
+    # Auto-discover EVERY husky project. With no --root we scan the whole home
+    # dir, so no path needs to be given; --root narrows the search. We locate
+    # .husky directories directly rather than relying on husky having set
+    # core.hooksPath (a freshly-cloned repo won't until `npm install` runs).
+    [ "$ROOT_SET" = 1 ] || search_roots=("$HOME")
+    step "Auto-discovering husky repos under ${search_roots[*]}  (this can take a few seconds)"
+    while IFS= read -r top; do
+      [ -n "$top" ] && husky_repos+=("$top")
+    done < <(
+      find "${search_roots[@]}" -maxdepth 8 \
+        \( -name node_modules -o -name .git -o -name Library -o -name .Trash \
+           -o -name .cache -o -name .npm -o -name Applications \) -prune \
+        -o -type d -name .husky -prune -print 2>/dev/null \
+      | while IFS= read -r hk; do
+          repo="$(dirname "$hk")"
+          git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
+          git -C "$repo" rev-parse --show-toplevel 2>/dev/null
+        done | sort -u
+    )
   fi
 
   if [ ${#husky_repos[@]} -eq 0 ]; then
-    [ -z "$HUSKY_REPO" ] && ok "no husky repos found under $ROOT_DIR"
+    [ -z "$HUSKY_REPO" ] && ok "no husky repos found under ${search_roots[*]}"
   else
+    [ -z "$HUSKY_REPO" ] && info "found ${#husky_repos[@]} husky repo(s)"
     changed_any=0
     for repo in "${husky_repos[@]}"; do
-      rel="${repo#"$ROOT_DIR"/}"
+      rel="${repo/#$HOME/~}"
       if [ "$INJECT_HUSKY" != 1 ]; then
         warn "husky repo not wired (--no-husky): $rel"
         continue
