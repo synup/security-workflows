@@ -106,6 +106,23 @@ Disable them all with `SYNUP_SCAN_POST=0`, or one event with `SYNUP_SCAN_<EVENT>
 (`SYNUP_SCAN_MERGE` / `SYNUP_SCAN_REBASE` / `SYNUP_SCAN_CHECKOUT` / `SYNUP_SCAN_CLONE`).
 Branch switches are frequent, so `SYNUP_SCAN_CHECKOUT=0` (e.g. in your shell rc) is a common one.
 
+**Homebrew is skipped by default.** Because the global `core.hooksPath` applies to *every*
+git repo, `brew install`/`brew update` (which run git inside `/opt/homebrew`) would otherwise
+fire these hooks and scan Homebrew's huge tree. So the post-* hooks **skip Homebrew repos by
+default** — prefixes `/opt/homebrew`, `/usr/local/Homebrew`, `/usr/local/Cellar`,
+`$HOMEBREW_REPOSITORY`, plus a bail-out when Homebrew's `HOMEBREW_COMMAND` is set.
+
+Opt back in to scanning Homebrew with a flag:
+```bash
+SYNUP_SCAN_HOMEBREW=1 brew update     # scan Homebrew this run
+export SYNUP_SCAN_HOMEBREW=1          # …or always, in your shell rc
+```
+Skip other vendor/tool repos too via `SYNUP_SCAN_IGNORE_PATHS` (colon-separated prefixes,
+always honored):
+```bash
+export SYNUP_SCAN_IGNORE_PATHS="$HOME/.oh-my-zsh:$HOME/.asdf:/opt/some/vendor/repo"
+```
+
 Escape hatches (use rarely):
 ```bash
 git commit --no-verify                 # skip all hooks
