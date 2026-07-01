@@ -5,6 +5,11 @@
 # Disable all of them with SYNUP_SCAN_POST=0 (or SYNUP_SKIP_MALWARE_SCAN=1), or
 # just one event with SYNUP_SCAN_<EVENT>=0 — e.g. SYNUP_SCAN_CHECKOUT=0,
 # SYNUP_SCAN_MERGE=0, SYNUP_SCAN_REBASE=0, SYNUP_SCAN_CLONE=0.
+#
+# Homebrew (and other tools that run git under the hood) would otherwise fire
+# these hooks and scan huge vendor trees on every `brew install`. So Homebrew
+# repos are SKIPPED BY DEFAULT. Opt back in with SYNUP_SCAN_HOMEBREW=1.
+# Add your own always-skip prefixes via SYNUP_SCAN_IGNORE_PATHS (colon-separated).
 set -uo pipefail
 event="${1:-change}"
 [ "${SYNUP_SKIP_MALWARE_SCAN:-}" = "1" ] && exit 0
@@ -16,6 +21,21 @@ evvar="SYNUP_SCAN_${evupper}"
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCANNER="$HOOK_DIR/../scripts/scan/runner.py"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# user-listed prefixes are always skipped; Homebrew defaults are added unless
+# SYNUP_SCAN_HOMEBREW=1 (opt back in to scanning Homebrew repos too).
+_ignore="${SYNUP_SCAN_IGNORE_PATHS:-}"
+if [ "${SYNUP_SCAN_HOMEBREW:-0}" != "1" ]; then
+  [ -n "${HOMEBREW_COMMAND:-}" ] && exit 0   # git invoked by brew itself
+  _ignore="/opt/homebrew:/usr/local/Homebrew:/usr/local/Cellar:/home/linuxbrew/.linuxbrew:${HOMEBREW_REPOSITORY:-}:$_ignore"
+fi
+_oldifs="$IFS"; IFS=:
+for _p in $_ignore; do
+  [ -n "$_p" ] || continue
+  case "$REPO_ROOT" in "$_p"|"$_p"/*) exit 0 ;; esac
+done
+IFS="$_oldifs"
+
 command -v python3 >/dev/null 2>&1 || exit 0
 [ -f "$SCANNER" ] || exit 0
 RED='\033[0;31m'; YEL='\033[1;33m'; RST='\033[0m'
