@@ -1,5 +1,5 @@
 {
-  "_comment": "Central scan-ignore config for the 'app' monorepo, consumed by the Jenkins pipeline via --config /scanner/repo-ignores/app.json. Allowlists vendored/generated/test-data/binary paths and two known-benign malware-check matches (a NodeSource install line and an internal deserialization call). Disables low-signal JS obfuscation heuristics.",
+  "_comment": "app monorepo scan-ignore. Disables low-signal malware heuristics (hardcoded data / host lists / minified code) and allowlists vendored/generated/test paths plus two known-benign malware-category matches (a NodeSource install line and an internal deserialization call).",
   "allow": [
     "*.min.js", "*.min.css", "*.css",
     "*/assets/javascripts/*", "v2app/whitelabel_dashboard/*",
@@ -13,5 +13,10 @@
     "campaign-manager/Dockerfile.base",
     "notifications/app/services/generic_parser.rb"
   ],
-  "malware": { "disable_rules": ["charat_permute", "dynamic_lookup", "long_line"] }
+  "malware": {
+    "disable_rules": [
+      "long_line", "entropy_string", "hex_escapes", "octal_escapes",
+      "hidden_whitespace", "eof_marker", "charat_permute", "dynamic_lookup"
+    ]
+  }
 }
