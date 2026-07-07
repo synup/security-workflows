@@ -7,7 +7,6 @@
   ],
   "malware": {
     "disable_rules": [
-      "long_line", "entropy_string", "hex_escapes", "octal_escapes",
       "hidden_whitespace", "eof_marker", "charat_permute", "dynamic_lookup"
     ]
   }
