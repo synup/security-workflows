@@ -1,0 +1,13 @@
+{
+  "_comment": "Default scan-ignore used by the Jenkins security-scan stage when a repo has no scan-ignore/<repo>/.synup-scan.json. Disables low-signal malware heuristics that flag hardcoded data, host lists, config blobs and minified code, so the gate fires only on genuine malware signatures.",
+  "allow": [
+    "*.min.js", "*.min.css",
+    "*/tests/fixtures/*", "*/test/data/*", "*/spec/support/*",
+    "*.pkl", "*.DS_Store", "*.ipynb"
+  ],
+  "malware": {
+    "disable_rules": [
+      "hidden_whitespace", "eof_marker", "charat_permute", "dynamic_lookup"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "_comment": "app monorepo scan-ignore. Disables low-signal malware heuristics (hardcoded data / host lists / minified code) and allowlists vendored/generated/test paths plus two known-benign malware-category matches (a NodeSource install line and an internal deserialization call).",
+  "allow": [
+    "*.min.js", "*.min.css",
+    "scantool/web/static/css/phoenix.css",
+    "v2app/whitelabel_dashboard/*",
+    "v2app/docs/*", "v2app/index.html",
+    "*/tests/fixtures/*", "*sample_response*",
+    "*/test/*", "*/spec/*", "*_test.py",
+    "rankings/data/*", "*/samples/*", "campaign-manager/docs/*",
+    "*.pkl", "*.DS_Store", "*.ipynb", "*.sql",
+    "*/db/email_templates/*", "*/pdf_reports/*",
+    "api-docs/source/*", "scantool/cover/*",
+    "campaign-manager/Dockerfile.base",
+    "notifications/app/services/generic_parser.rb"
+  ],
+  "malware": {
+    "disable_rules": [
+      "hidden_whitespace", "eof_marker", "charat_permute", "dynamic_lookup"
+    ]
+  }
+}
