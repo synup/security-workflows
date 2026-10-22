@@ -13,6 +13,19 @@ from ..base import Finding, clip, line_of
 
 NAME = "dangerous_code"
 
+# SQL keywords must be tokens, not dotted API methods or prose labels such as
+# "chat.update" / "Previous update:". Keep punctuation valid in SQL (quoted
+# identifiers, comments, SELECT*, SELECT(...)) rather than requiring a space.
+_SQL_KEYWORD = r"(?<![\w.])(?:select|insert|update|delete)\b(?=\s|/\*|--|[*?('\"`\[]|:[A-Za-z_])"
+_SQL_CONCAT = re.compile(
+    _SQL_KEYWORD + r"[^\n;]{0,120}(?:\"\s*\+|\'\s*\+|%\s*\(|\.format\(|`[^`]*\$\{)"
+    # The opening backtick is before the SQL keyword in a normal JS template.
+    # The old alternative expected another backtick after the keyword and
+    # missed UPDATE/INSERT/DELETE/SELECT templates with interpolated values.
+    + r"|`[^`\n;]{0,120}?" + _SQL_KEYWORD + r"[^`\n;]{0,120}\$\{",
+    re.IGNORECASE,
+)
+
 RULES = [
     # --- injection ---
     ("py_shell_injection", "high", "Shell command built from interpolation (command injection)",
@@ -22,7 +35,7 @@ RULES = [
     ("js_child_process_concat", "high", "child_process exec with string concatenation",
         re.compile(r"(?:child_process\.)?exec(?:Sync)?\s*\(\s*[`\"'][^`\"']*[`\"']\s*\+|\bexec(?:Sync)?\s*\(\s*`[^`]*\$\{")),
     ("sql_concat", "high", "SQL query built by string concatenation/format (SQLi)",
-        re.compile(r"(?i)(?:select|insert|update|delete)\b[^\n;]{0,120}(?:\"\s*\+|\'\s*\+|%\s*\(|\.format\(|`[^`]*\$\{)")),
+        _SQL_CONCAT),
     # --- unsafe deserialization ---
     ("py_pickle", "high", "pickle.loads — unsafe deserialization",
         re.compile(r"\bpickle\.loads?\s*\(")),
