@@ -10,9 +10,10 @@
 # SYNUP_SCAN_POST=0 disables all post-* scans.
 [ "${3:-}" = "1" ] || exit 0
 dir="$(cd "$(dirname "$0")" && pwd)"
-# null prev SHA = brand-new clone; otherwise it's a branch switch
+# null prev SHA = brand-new clone → full scan (nothing to diff against);
+# otherwise it's a branch switch → scan only files that differ from $1 (prev HEAD).
 if [ "${1:-}" = "0000000000000000000000000000000000000000" ]; then
   exec "$dir/_scan-project" clone
 else
-  exec "$dir/_scan-project" checkout
+  exec "$dir/_scan-project" checkout "${1:-}"
 fi

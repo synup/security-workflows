@@ -1,3 +1,8 @@
 #!/usr/bin/env bash
-# Runs after `git merge` / `git pull` → full-project scan.
-exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" merge
+# Runs after `git merge` / `git pull`. $1 = 1 for a squash merge.
+# Scans only the files the merge changed: git sets ORIG_HEAD to the pre-merge
+# HEAD, so ORIG_HEAD..HEAD is exactly what came in.
+# A squash merge doesn't move HEAD (changes sit in the index) — the blocking
+# pre-commit scan covers them when you commit, so nothing to do here.
+[ "${1:-0}" = "1" ] && exit 0
+exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" merge ORIG_HEAD

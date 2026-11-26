@@ -8,6 +8,7 @@ high/critical finding is present.
 Usage:
   scan/runner.py [path] [--min-severity warn|high|critical] [--json]
                  [--report FILE] [--config FILE] [--disable a,b] [--list-checks]
+                 [--files-from FILE|-]
 
 Config: a `.synup-scan.json` in the working dir (repo root) is auto-loaded.
 Inline: add a `synup-ignore` comment to a line to suppress its findings.
@@ -36,39 +37,113 @@ def _allowed(rel: str, globs) -> bool:
     return any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(rel, g.rstrip("/") + "/*") for g in globs)
 
 
-def scan(root: Path, cfg: Config, disabled_checks: set[str], progress: bool = False):
-    enabled = [m for m in ALL if m.NAME not in disabled_checks]
-    findings: list[Finding] = []
-    nfiles = 0
-    live = progress and sys.stderr.isatty()
-    for path in iter_files(root):
-        rel = relpath(path, root)
-        if _allowed(rel, cfg.allow):
-            continue
+# Parallel scanning: files are scanned in a process pool (the checks are
+# CPU-bound regex work, so threads wouldn't help under the GIL). Small scans
+# (pre-commit, incremental post-* hooks) stay serial — spawning workers costs
+# more than it saves for a handful of files.
+PARALLEL_MIN_FILES = 64
+
+_W_ENABLED: list = []          # per-process state, set by _init_worker / serial path
+_W_RULES: dict = {}
+
+
+def _init_worker(enabled_names, disabled_rules):
+    global _W_ENABLED, _W_RULES
+    _W_ENABLED = [m for m in ALL if m.NAME in enabled_names]
+    _W_RULES = disabled_rules
+
+
+def _scan_one(path: Path, rel: str) -> list[Finding] | None:
+    """Scan one file with the enabled checks. None = unreadable (not counted)."""
+    try:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = text.splitlines()
+    # One pass over the file: almost no file has a `synup-ignore`, so skip the
+    # per-finding line lookup (very slow on huge one-line JSON/minified files).
+    has_ignore = INLINE_IGNORE.search(text) is not None
+    out: list[Finding] = []
+    for mod in _W_ENABLED:
         try:
-            text = path.read_bytes().decode("utf-8", errors="replace")
-        except OSError:
-            continue
-        nfiles += 1
+            results = mod.check(path, rel, text, lines, _W_RULES.get(mod.NAME, set()))
+        except Exception as e:  # a buggy rule must never break the whole scan
+            results = [Finding("info", mod.NAME, f"check error: {e}", rel, 0)]
+        for f in results:
+            if has_ignore and f.line and 0 < f.line <= len(lines) and INLINE_IGNORE.search(lines[f.line - 1]):
+                continue  # inline-suppressed
+            out.append(f)
+    return out
+
+
+def _default_jobs() -> int:
+    env = os.environ.get("SYNUP_SCAN_JOBS", "")
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    return os.cpu_count() or 1
+
+
+def scan(root: Path, cfg: Config, disabled_checks: set[str], progress: bool = False,
+         only: list[str] | None = None, jobs: int | None = None):
+    enabled_names = [m.NAME for m in ALL if m.NAME not in disabled_checks]
+    disabled_rules = {m.NAME: cfg.disabled_rules(m.NAME) for m in ALL}
+    files = []
+    for path in iter_files(root, only):
+        rel = relpath(path, root)
+        if not _allowed(rel, cfg.allow):
+            files.append((path, rel))
+
+    jobs = jobs or _default_jobs()
+    live = progress and sys.stderr.isatty()
+    results: list = [None] * len(files)
+    done = 0
+
+    def tick(rel):
+        nonlocal done
+        done += 1
         if progress:
             if live:
-                sys.stderr.write(f"\r\033[K  {CYA}scanning…{RST} {nfiles} files  {_trunc(rel, 48)}")
+                sys.stderr.write(f"\r\033[K  {CYA}scanning…{RST} {done}/{len(files)} files  {_trunc(rel, 48)}")
                 sys.stderr.flush()
-            elif nfiles % 250 == 0:                       # non-tty (CI/log): periodic line
-                sys.stderr.write(f"  scanning… {nfiles} files\n"); sys.stderr.flush()
-        lines = text.splitlines()
-        for mod in enabled:
-            try:
-                results = mod.check(path, rel, text, lines, cfg.disabled_rules(mod.NAME))
-            except Exception as e:  # a buggy rule must never break the whole scan
-                results = [Finding("info", mod.NAME, f"check error: {e}", rel, 0)]
-            for f in results:
-                if f.line and 0 < f.line <= len(lines) and INLINE_IGNORE.search(lines[f.line - 1]):
-                    continue  # inline-suppressed
-                findings.append(f)
+            elif done % 250 == 0:                         # non-tty (CI/log): periodic line
+                sys.stderr.write(f"  scanning… {done}/{len(files)} files\n"); sys.stderr.flush()
+
+    ran_parallel = False
+    if jobs > 1 and len(files) >= PARALLEL_MIN_FILES:
+        try:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            with ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker,
+                                     initargs=(enabled_names, disabled_rules)) as ex:
+                # biggest files first so one huge file doesn't finish last alone
+                order = sorted(range(len(files)), key=lambda i: -_size(files[i][0]))
+                futs = {ex.submit(_scan_one, *files[i]): i for i in order}
+                for fut in as_completed(futs):
+                    i = futs[fut]
+                    results[i] = fut.result()
+                    tick(files[i][1])
+            ran_parallel = True
+        except Exception as e:  # no fork/spawn allowed, broken pool… → serial
+            if progress:
+                sys.stderr.write(f"\r\033[K  {YEL}parallel scan unavailable ({e}); scanning serially{RST}\n")
+            results = [None] * len(files); done = 0
+    if not ran_parallel:
+        _init_worker(enabled_names, disabled_rules)
+        for i, (path, rel) in enumerate(files):
+            results[i] = _scan_one(path, rel)
+            tick(rel)
+
     if live:
-        sys.stderr.write(f"\r\033[K  {GRN}scanned {nfiles} files{RST}\n"); sys.stderr.flush()
+        sys.stderr.write(f"\r\033[K  {GRN}scanned {len(files)} files{RST}\n"); sys.stderr.flush()
+    findings = [f for r in results if r for f in r]          # stable: original file order
+    nfiles = sum(1 for r in results if r is not None)
     return findings, nfiles
+
+
+def _size(p: Path) -> int:
+    try:
+        return p.stat().st_size
+    except OSError:
+        return 0
 
 
 SEV_COLOR = {"critical": RED, "high": RED, "warn": YEL, "info": CYA}
@@ -144,6 +219,11 @@ def main() -> int:
     ap.add_argument("--config", metavar="FILE", help="path to .synup-scan.json (default: ./.synup-scan.json)")
     ap.add_argument("--disable", default="", help="comma-separated checks to skip")
     ap.add_argument("--progress", action="store_true", help="show a live file-by-file progress counter")
+    ap.add_argument("--jobs", "-j", type=int, default=None,
+                    help="worker processes for large scans (default: CPU count, or $SYNUP_SCAN_JOBS; 1 = serial)")
+    ap.add_argument("--files-from", metavar="FILE",
+                    help="scan only the NUL- or newline-separated paths (relative to `path`) "
+                         "listed in FILE ('-' = stdin) instead of walking the whole tree")
     ap.add_argument("--list-checks", action="store_true", help="list check names")
     ap.add_argument("--list-rules", action="store_true",
                     help="list every check + rule (id, severity, blocks?) — the menu for .synup-scan.json")
@@ -205,7 +285,12 @@ def main() -> int:
 
     min_sev = args.min_severity or cfg.min_severity or "warn"
 
-    all_findings, files_scanned = scan(root, cfg, disabled_checks, progress=args.progress)
+    only = None
+    if args.files_from:
+        raw = sys.stdin.read() if args.files_from == "-" else Path(args.files_from).read_text(encoding="utf-8")
+        only = [p for p in (raw.split("\0") if "\0" in raw else raw.splitlines()) if p]
+
+    all_findings, files_scanned = scan(root, cfg, disabled_checks, progress=args.progress, only=only, jobs=args.jobs)
     findings = [f for f in all_findings if sev_ge(f.severity, min_sev)]
 
     path_str = str(root)

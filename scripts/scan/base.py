@@ -63,8 +63,35 @@ def shannon_entropy(s: str) -> float:
     return -sum((c / n) * math.log2(c / n) for c in counts.values())
 
 
-def iter_files(root: Path) -> Iterable[Path]:
-    """Yield scannable files under root (or root itself if it's a file)."""
+def _scannable(p: Path) -> bool:
+    if p.is_symlink() or not p.is_file():
+        return False
+    if p.name in SKIP_FILENAMES or p.suffix.lower() in SKIP_EXT:
+        return False
+    try:
+        return p.stat().st_size <= MAX_FILE_BYTES
+    except OSError:
+        return False
+
+
+def iter_files(root: Path, only: Iterable[str] | None = None) -> Iterable[Path]:
+    """Yield scannable files under root (or root itself if it's a file).
+
+    If `only` is given (paths relative to root), yield just those files —
+    applying the same skip rules as the directory walk — instead of walking.
+    """
+    if only is not None:
+        seen = set()
+        for rel in only:
+            if not rel or rel in seen:
+                continue
+            seen.add(rel)
+            if any(part in SKIP_DIRS for part in Path(rel).parts[:-1]):
+                continue
+            p = root / rel
+            if _scannable(p):
+                yield p
+        return
     if root.is_file():
         if root.name in SKIP_FILENAMES:
             return
@@ -75,16 +102,8 @@ def iter_files(root: Path) -> Iterable[Path]:
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
             p = Path(dirpath) / fn
-            if p.is_symlink() or not p.is_file():
-                continue
-            if fn in SKIP_FILENAMES or p.suffix.lower() in SKIP_EXT:
-                continue
-            try:
-                if p.stat().st_size > MAX_FILE_BYTES:
-                    continue
-            except OSError:
-                continue
-            yield p
+            if _scannable(p):
+                yield p
 
 
 def relpath(path: Path, root: Path) -> str:
