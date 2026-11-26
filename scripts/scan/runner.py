@@ -8,6 +8,7 @@ high/critical finding is present.
 Usage:
   scan/runner.py [path] [--min-severity warn|high|critical] [--json]
                  [--report FILE] [--config FILE] [--disable a,b] [--list-checks]
+                 [--files-from FILE|-]
 
 Config: a `.synup-scan.json` in the working dir (repo root) is auto-loaded.
 Inline: add a `synup-ignore` comment to a line to suppress its findings.
@@ -36,12 +37,13 @@ def _allowed(rel: str, globs) -> bool:
     return any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(rel, g.rstrip("/") + "/*") for g in globs)
 
 
-def scan(root: Path, cfg: Config, disabled_checks: set[str], progress: bool = False):
+def scan(root: Path, cfg: Config, disabled_checks: set[str], progress: bool = False,
+         only: list[str] | None = None):
     enabled = [m for m in ALL if m.NAME not in disabled_checks]
     findings: list[Finding] = []
     nfiles = 0
     live = progress and sys.stderr.isatty()
-    for path in iter_files(root):
+    for path in iter_files(root, only):
         rel = relpath(path, root)
         if _allowed(rel, cfg.allow):
             continue
@@ -144,6 +146,9 @@ def main() -> int:
     ap.add_argument("--config", metavar="FILE", help="path to .synup-scan.json (default: ./.synup-scan.json)")
     ap.add_argument("--disable", default="", help="comma-separated checks to skip")
     ap.add_argument("--progress", action="store_true", help="show a live file-by-file progress counter")
+    ap.add_argument("--files-from", metavar="FILE",
+                    help="scan only the NUL- or newline-separated paths (relative to `path`) "
+                         "listed in FILE ('-' = stdin) instead of walking the whole tree")
     ap.add_argument("--list-checks", action="store_true", help="list check names")
     ap.add_argument("--list-rules", action="store_true",
                     help="list every check + rule (id, severity, blocks?) — the menu for .synup-scan.json")
@@ -205,7 +210,12 @@ def main() -> int:
 
     min_sev = args.min_severity or cfg.min_severity or "warn"
 
-    all_findings, files_scanned = scan(root, cfg, disabled_checks, progress=args.progress)
+    only = None
+    if args.files_from:
+        raw = sys.stdin.read() if args.files_from == "-" else Path(args.files_from).read_text(encoding="utf-8")
+        only = [p for p in (raw.split("\0") if "\0" in raw else raw.splitlines()) if p]
+
+    all_findings, files_scanned = scan(root, cfg, disabled_checks, progress=args.progress, only=only)
     findings = [f for f in all_findings if sev_ge(f.severity, min_sev)]
 
     path_str = str(root)

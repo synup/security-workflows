@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Runs after `git rebase` (and `commit --amend`). Scan after a rebase; skip amend
 # (the pre-commit hook already scanned that commit). $1 = rebase|amend.
+# Scans only the files the rebase changed: rebase sets ORIG_HEAD to the
+# pre-rebase tip, so ORIG_HEAD..HEAD covers the replayed commits plus whatever
+# the new base brought in.
 [ "${1:-}" = "amend" ] && exit 0
-exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" rebase
+exec "$(cd "$(dirname "$0")" && pwd)/_scan-project" rebase ORIG_HEAD

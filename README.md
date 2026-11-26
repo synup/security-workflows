@@ -90,21 +90,48 @@ under it and wires the scan into each husky one — no per-repo path needed. Run
 | Hook | When | Scope | Blocks? | Skip just this one |
 |------|------|-------|---------|--------------------|
 | `pre-commit` | every `git commit` | **staged** content | ✅ yes — high/critical block the commit | `git commit --no-verify` |
-| `post-merge` | after `git merge` / `git pull` | **whole project** | ⚠️ no — runs after the merge; alerts on incoming malware | `SYNUP_SCAN_MERGE=0` |
-| `post-rewrite` | after `git rebase` | **whole project** | ⚠️ no — informational | `SYNUP_SCAN_REBASE=0` |
-| `post-checkout` | after a fresh `git clone` **or** a branch switch (`git checkout <branch>`) | **whole project** | ⚠️ no — informational | `SYNUP_SCAN_CHECKOUT=0` (clone: `SYNUP_SCAN_CLONE=0`) |
+| `post-merge` | after `git merge` / `git pull` | **files the merge changed** | ⚠️ no — runs after the merge; alerts on incoming malware | `SYNUP_SCAN_MERGE=0` |
+| `post-rewrite` | after `git rebase` | **files the rebase changed** | ⚠️ no — informational | `SYNUP_SCAN_REBASE=0` |
+| `post-checkout` | after a fresh `git clone` **or** a branch switch (`git checkout <branch>`) | clone: **whole project**; switch: **files that differ between the branches** | ⚠️ no — informational | `SYNUP_SCAN_CHECKOUT=0` (clone: `SYNUP_SCAN_CLONE=0`) |
 
 The `pre-commit` hook materializes the **staged** content into a temp dir and runs
 `scripts/scan/runner.py --min-severity high` — any high/critical finding **blocks** the commit.
 
-The `post-*` hooks run a **full-project** scan (with a live `--progress` counter) *after* the
-operation, so they can't block it — they're alerts for when malware/secrets arrive via a
-pull/merge/rebase/checkout/clone. `post-checkout` runs on both a fresh clone and a branch
-switch, but **not** on a file checkout (`git checkout -- file`).
+The `post-*` hooks scan *after* the operation, so they can't block it — they're alerts for
+when malware/secrets arrive via a pull/merge/rebase/checkout/clone. `post-checkout` runs on
+both a fresh clone and a branch switch, but **not** on a file checkout (`git checkout -- file`).
+
+**They scan only what changed**, so they stay fast in large repos:
+
+| Event | Files scanned |
+|-------|---------------|
+| merge / pull | `ORIG_HEAD..HEAD` — everything the merge brought in |
+| rebase / `pull --rebase` | `ORIG_HEAD..HEAD` — the tree change between the old and new tip |
+| branch switch | files that differ between the previous and new branch |
+| fresh clone | whole project (nothing to diff against) |
+| `merge --squash` | nothing here — the blocking `pre-commit` scan covers it when you commit |
+
+Only added/modified/renamed files are scanned (deletions can't add malware). If the base commit
+can't be resolved the hook falls back to a full-project scan. Force a full scan with
+`SYNUP_SCAN_FULL=1` (e.g. `SYNUP_SCAN_FULL=1 git pull`), or run the scanner manually.
 
 Disable them all with `SYNUP_SCAN_POST=0`, or one event with `SYNUP_SCAN_<EVENT>=0`
 (`SYNUP_SCAN_MERGE` / `SYNUP_SCAN_REBASE` / `SYNUP_SCAN_CHECKOUT` / `SYNUP_SCAN_CLONE`).
 Branch switches are frequent, so `SYNUP_SCAN_CHECKOUT=0` (e.g. in your shell rc) is a common one.
+
+**The reviewed default branch is skipped by default.** Pulling or checking out `master`/`main`
+(or whatever `origin/HEAD` points at) across many repos made these full scans slow, and the
+remote copies of those branches are already gated by PR review + CI. So the post-* hooks skip
+the scan when you're on a default branch **and every commit in it is already on its remote
+copy** (`origin/master`), e.g. a plain `git pull`, clone or checkout of master.
+
+If your local default branch has anything the remote doesn't — you merged, fast-forwarded or
+rebased another branch into it locally — that code is unreviewed, so it **is** scanned.
+Non-default branches and detached HEADs are always scanned. Tune it with:
+```bash
+export SYNUP_SCAN_SKIP_BRANCHES="develop:staging"   # also skip these (colon-separated)
+SYNUP_SCAN_DEFAULT_BRANCH=1 git pull                 # scan master/main this run anyway
+```
 
 **Homebrew is skipped by default.** Because the global `core.hooksPath` applies to *every*
 git repo, `brew install`/`brew update` (which run git inside `/opt/homebrew`) would otherwise
@@ -159,6 +186,7 @@ python3 ~/.synup/security-workflows/scripts/scan/runner.py .                  # 
 python3 ~/.synup/security-workflows/scripts/scan/runner.py file.js --json
 python3 ~/.synup/security-workflows/scripts/scan/runner.py . --disable dangerous_code
 python3 ~/.synup/security-workflows/scripts/scan/runner.py --list-checks
+git diff --name-only -z HEAD~3 HEAD | python3 ~/.synup/security-workflows/scripts/scan/runner.py . --files-from -
 ```
 (`scripts/scan_malware.py` is the original self-contained scanner, kept unchanged so
 the existing CI workflow keeps working as-is — see below.)
@@ -225,8 +253,8 @@ husky repo gets the **same** coverage as everywhere else:
 | `.husky/<hook>` | Delegates to | Behavior |
 |-----------------|--------------|----------|
 | `pre-commit` | `hooks/pre-commit` | **blocking** — injected at the **top** so the scan runs before lint-staged/npm hooks |
-| `post-merge` | `hooks/post-merge` | informational full-project scan |
-| `post-rewrite` | `hooks/post-rewrite` | informational full-project scan |
+| `post-merge` | `hooks/post-merge` | informational scan of changed files |
+| `post-rewrite` | `hooks/post-rewrite` | informational scan of changed files |
 | `post-checkout` | `hooks/post-checkout` | informational (clone + branch switch) |
 
 `pre-commit` keeps any existing content (scan runs first, then your hooks):
