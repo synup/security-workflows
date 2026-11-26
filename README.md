@@ -188,6 +188,10 @@ python3 ~/.synup/security-workflows/scripts/scan/runner.py . --disable dangerous
 python3 ~/.synup/security-workflows/scripts/scan/runner.py --list-checks
 git diff --name-only -z HEAD~3 HEAD | python3 ~/.synup/security-workflows/scripts/scan/runner.py . --files-from -
 ```
+Large scans (64+ files — full-project scans, fresh clones, CI) run **in parallel** across all
+CPU cores; small ones (pre-commit, incremental post-* scans) stay serial since starting workers
+would cost more than it saves. Control it with `--jobs N` / `-j N` or `SYNUP_SCAN_JOBS=N`
+(`1` = serial). Results are identical either way.
 (`scripts/scan_malware.py` is the original self-contained scanner, kept unchanged so
 the existing CI workflow keeps working as-is — see below.)
 
